@@ -19,6 +19,7 @@ from vosk import KaldiRecognizer, Model, SetLogLevel
 
 ROOT = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 DATA = ROOT / "data"
+SPEAKER_PATH = DATA / "vosk-model-spk-0.4"
 MODELS = {"ru": "vosk-model-small-ru-0.22", "en": "vosk-model-small-en-us-0.15"}
 SetLogLevel(-1)
 DEVICE_LOCK = threading.Lock()
@@ -60,13 +61,51 @@ def mono16(data, channels):
     return frames.mean(axis=1).astype("<i2").tobytes()
 
 
-def capture(audio, device, language, target, stop, emit, record_path):
+class SessionSpeakers:
+    """Cluster phrase embeddings within a single system-audio session."""
+    def __init__(self):
+        self.centres = []
+
+    def label(self, result):
+        unknown = "Голос не определён"
+        frames = result.get("spk_frames", 0)
+        if frames < 65 or not result.get("spk"):
+            return unknown
+        vector = np.asarray(result["spk"], dtype=float)
+        norm = np.linalg.norm(vector)
+        if not np.isfinite(norm) or norm == 0:
+            return unknown
+        vector /= norm
+        scores = [float(centre @ vector) for centre in self.centres]
+        if scores:
+            index = int(np.argmax(scores))
+            best = scores[index]
+            if best >= (0.68 if frames < 150 else 0.59):
+                if len(scores) > 1 and best - sorted(scores)[-2] < 0.08:
+                    return unknown
+                if frames >= 150:
+                    centre = self.centres[index] * 0.8 + vector * 0.2
+                    self.centres[index] = centre / np.linalg.norm(centre)
+                return f"Голос {index + 1}"
+            if best > 0.45:
+                return unknown
+        if frames < 150:
+            return unknown
+        self.centres.append(vector)
+        return f"Голос {len(self.centres)}"
+
+
+def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None):
     """Capture continuously while speech recognition and translation consume queued blocks."""
     chunks = queue.Queue(maxsize=200)
     overflow = threading.Event()
     rate = int(device["defaultSampleRate"])
     channels = int(device["maxInputChannels"])
     decoder = KaldiRecognizer(language.speech, 16000)
+    speakers = None
+    if speaker_model is not None:
+        decoder.SetSpkModel(speaker_model)
+        speakers = SessionSpeakers()
     resampler = None
     partial = ""
     heard = False
@@ -83,9 +122,11 @@ def capture(audio, device, language, target, stop, emit, record_path):
 
     def publish(result):
         nonlocal partial
-        text = json.loads(result).get("text", "").strip()
+        phrase = json.loads(result)
+        text = phrase.get("text", "").strip()
         if text:
-            emit("line", target, (text, language.translate(text)))
+            who = speakers.label(phrase) if speakers is not None else None
+            emit("line", target, (text, language.translate(text), who))
         partial = ""
         emit("partial", target, "")
 

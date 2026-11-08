@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from engine import Language, capture, devices
+from vosk import SpkModel
+from engine import Language, SPEAKER_PATH, capture, devices
 
 SOURCES = ("Микрофон", "Звук компьютера")
 DIRECTIONS = ("Русский → Английский", "Английский → Русский")
@@ -18,7 +19,16 @@ class Channel:
         panel.grid(row=index + 1, column=0, sticky="nsew", pady=(0, 10))
         panel.columnconfigure(0, weight=1)
         panel.rowconfigure(2, weight=1)
-        ttk.Label(panel, text=SOURCES[index], style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        header = ttk.Frame(panel, style="Card.TFrame")
+        header.grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text=SOURCES[index], style="Title.TLabel").pack(side="left")
+        if index == 1:
+            available = SPEAKER_PATH.is_dir()
+            self.identify = tk.BooleanVar(value=available)
+            self.speaker_check = ttk.Checkbutton(header, text="Различать голоса" if available else "Модель голосов не установлена",
+                                                 variable=self.identify, style="Card.TCheckbutton",
+                                                 state="normal" if available else "disabled")
+            self.speaker_check.pack(side="left", padx=(10, 0))
         self.direction = ttk.Combobox(panel, values=DIRECTIONS, state="readonly", width=23)
         self.direction.current(index)
         self.direction.grid(row=0, column=1, sticky="e")
@@ -29,6 +39,7 @@ class Channel:
         self.history.grid(row=2, column=0, columnspan=2, sticky="nsew")
         self.history.tag_configure("source", foreground="#55676d", font=("Segoe UI", 10))
         self.history.tag_configure("target", foreground="#132c35", spacing3=8)
+        self.history.tag_configure("speaker", foreground="#085c58", font=("Segoe UI", 10, "bold"))
         self.partial = tk.StringVar()
         ttk.Label(panel, textvariable=self.partial, style="Partial.TLabel", anchor="w").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
@@ -39,12 +50,20 @@ class Channel:
         self.device.configure(values=names)
         self.device.current(1 if devices else 0)
 
-    def line(self, source, target):
+    def line(self, source, target, speaker=None):
         self.history.configure(state="normal")
+        if speaker:
+            self.history.insert("end", speaker + "\n", "speaker")
         self.history.insert("end", source + "\n", "source")
         self.history.insert("end", target + "\n", "target")
         self.history.see("end")
         self.history.configure(state="disabled")
+
+    def start_session(self):
+        if self.history.compare("end-1c", ">", "1.0"):
+            self.history.configure(state="normal")
+            self.history.insert("end", "Новый сеанс · " + datetime.now().strftime("%H:%M") + "\n", "source")
+            self.history.configure(state="disabled")
 
 
 class App:
@@ -60,6 +79,7 @@ class App:
         style.configure("Title.TLabel", background="white", foreground="#162e39", font=("Segoe UI", 13, "bold"))
         style.configure("Partial.TLabel", background="white", foreground="#517068")
         style.configure("TCheckbutton", background="#edf2f3")
+        style.configure("Card.TCheckbutton", background="white")
         root.configure(background="#edf2f3")
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
@@ -87,6 +107,7 @@ class App:
         self.stop = None
         self.closing = False
         self.cache = {}
+        self.speaker_model = None
         self.scan()
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.poll()
@@ -135,24 +156,29 @@ class App:
             channel.device.configure(state="disabled")
         self.refresh.configure(state="disabled")
         self.check.configure(state="disabled")
+        self.channels[1].speaker_check.configure(state="disabled")
         self.start.configure(text="Остановить")
         self.status.set("Подготовка моделей и устройств…")
-        threading.Thread(target=self.session, args=(selected, folder, self.stop), daemon=True).start()
+        detect = self.channels[1].identify.get() and any(index == 1 for index, _, _ in selected)
+        threading.Thread(target=self.session, args=(selected, folder, self.stop, detect), daemon=True).start()
 
-    def session(self, selected, folder, stop):
+    def session(self, selected, folder, stop, detect):
         def emit(kind, index, value):
             self.events.put((kind, index, value))
 
         def run(audio, index, device, lang):
             try:
                 path = folder / ("microphone.wav", "computer.wav")[index] if folder else None
-                capture(audio, device, self.cache[lang], index, stop, emit, path)
+                speaker_model = self.speaker_model if index == 1 and detect else None
+                capture(audio, device, self.cache[lang], index, stop, emit, path, speaker_model)
             except Exception as exc:
                 emit("error", index, str(exc))
                 stop.set()
 
         workers = []
         try:
+            if detect and self.speaker_model is None:
+                self.speaker_model = SpkModel(str(SPEAKER_PATH))
             for index, device, lang in selected:
                 if stop.is_set():
                     break
@@ -186,6 +212,7 @@ class App:
             elif kind == "line":
                 self.channels[index].line(*value)
             elif kind == "ready":
+                self.channels[index].start_session()
                 self.ready += 1
                 if self.ready == self.active_count and not self.stop.is_set():
                     self.status.set("Идёт перевод. Говорите в микрофон или включите речь на компьютере.")
@@ -203,6 +230,7 @@ class App:
                     channel.partial.set("")
                 self.refresh.configure(state="normal")
                 self.check.configure(state="normal")
+                self.channels[1].speaker_check.configure(state="normal" if SPEAKER_PATH.is_dir() else "disabled")
                 self.start.configure(text="Начать перевод", state="normal")
                 self.status.set(self.failure or (f"Записи: {self.folder}" if self.folder else "Перевод остановлен."))
         self.root.after(75, self.poll)

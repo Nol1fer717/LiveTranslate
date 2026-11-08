@@ -7,6 +7,8 @@ from zipfile import ZipFile
 
 DATA = Path(__file__).resolve().parent / "data"
 ARCHIVES = {
+    "https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip":
+        "a74d8f51144484813e16af689bb0f916b7a111e2347f467c4933c1166097b5a7",
     "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip":
         "961d5ff98a17f4aa6de69864d0aa71fa5bac682301d2b5d17a3f24c5c99a46d4",
     "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip":
