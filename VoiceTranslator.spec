@@ -1,5 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-from pathlib import Path
 from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, collect_delvewheel_libs_directory
 
 binaries = []
@@ -15,7 +14,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=['_cffi_backend', 'huggingface_hub.file_download', 'huggingface_hub._snapshot_download'],
-    hookspath=[str(Path(SPECPATH) / 'hooks')],
+    hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],

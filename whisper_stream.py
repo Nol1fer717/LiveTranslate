@@ -1,10 +1,17 @@
 from collections import deque
 import json
+import re
 
 import numpy as np
-import webrtcvad
 from faster_whisper import WhisperModel
+from faster_whisper.vad import get_speech_timestamps, get_vad_model
 from vosk import KaldiRecognizer
+
+
+RATE = 16000
+FRAME = 512  # Silero's 32 ms analysis window
+END_OF_SENTENCE = re.compile(r"""[.!?…]["'»”)]*$""")
+REPEATED_NUMBER = re.compile(r"(?<!\d)(\d+)(?:[\s.,;:\-–—]+\1(?!\d)){6,}")
 
 
 def load_whisper(folder):
@@ -12,10 +19,32 @@ def load_whisper(folder):
                         num_workers=2, local_files_only=True)
 
 
-class WhisperStream:
-    """Detect and translate each utterance independently on this audio input."""
-    FRAME_BYTES = 640  # 20 ms at 16 kHz, mono PCM16
+def reliable(segment):
+    return (segment.no_speech_prob <= 0.65 and segment.avg_logprob >= -1.0
+            and segment.compression_ratio <= 2.4 and not REPEATED_NUMBER.search(segment.text))
 
+
+class SpeechGate:
+    """Keep Silero's recurrent state private to each audio device."""
+    def __init__(self):
+        self.session = get_vad_model().session
+        self.reset()
+
+    def reset(self):
+        self.h = np.zeros((1, 1, 128), np.float32)
+        self.c = np.zeros_like(self.h)
+        self.context = np.zeros(64, np.float32)
+
+    def probability(self, frame):
+        samples = np.frombuffer(frame, "<i2").astype(np.float32) / 32768
+        inputs = np.concatenate((self.context, samples))[None, :]
+        self.context = samples[-64:]
+        probability, self.h, self.c = self.session.run(None, {"input": inputs, "h": self.h, "c": self.c})
+        return float(probability.item()) if np.max(np.abs(samples)) > 0.0003 else 0.0
+
+
+class WhisperStream:
+    """Buffer speech until a pause; retain undecided words across long windows."""
     def __init__(self, model, languages, speaker_model, speakers, line, partial):
         self.model = model
         self.languages = languages
@@ -24,64 +53,131 @@ class WhisperStream:
         self.partial = partial
         self.speaker_decoder = None
         if speaker_model is not None:
-            self.speaker_decoder = KaldiRecognizer(languages["en"].speech, 16000, speaker_model)
-        self.vad = webrtcvad.Vad(2)
+            self.speaker_decoder = KaldiRecognizer(languages["en"].speech, RATE, speaker_model)
+        self.gate = SpeechGate()
         self.pending = bytearray()
-        self.lead = deque(maxlen=10)
-        self.frames = []
-        self.voiced = 0
-        self.quiet = 0
+        self.lead = deque(maxlen=9)
+        self.frames = bytearray()
+        self.onset = self.quiet = self.voiced = 0
+        self.previous_text = ""
+        self.previous_language = self.previous_speaker = None
+        self.unfinished = ""
+        self.last_voice = self.clock = 0
 
     def accept(self, pcm):
         self.pending.extend(pcm)
-        while len(self.pending) >= self.FRAME_BYTES:
-            frame = bytes(self.pending[:self.FRAME_BYTES])
-            del self.pending[:self.FRAME_BYTES]
-            speech = self.vad.is_speech(frame, 16000)
+        while len(self.pending) >= FRAME * 2:
+            frame = bytes(self.pending[:FRAME * 2])
+            del self.pending[:FRAME * 2]
+            self.clock += FRAME
+            probability = self.gate.probability(frame)
             if not self.frames:
                 self.lead.append(frame)
-                if not speech:
+                self.onset = self.onset + 1 if probability >= 0.62 else 0
+                if self.onset < 3:
                     continue
-                self.frames.extend(self.lead)
+                self.frames.extend(b"".join(self.lead))
                 self.lead.clear()
+                self.voiced = self.onset
+                self.onset = 0
             else:
-                self.frames.append(frame)
-            self.voiced += int(speech)
-            self.quiet = 0 if speech else self.quiet + 1
-            if self.voiced == 6 and speech:
-                self.partial("Слушаю…")
-            if self.quiet >= 32 or len(self.frames) >= 600:
-                self.finish()
+                self.frames.extend(frame)
+                self.voiced += int(probability >= 0.62)
+            self.quiet = 0 if probability >= 0.38 else self.quiet + 1
+            if self.quiet >= 38:
+                self.finish(final=True)
+            elif len(self.frames) >= 24 * RATE * 2:
+                self.finish(final=False)
 
-    def finish(self):
-        pcm = b"".join(self.frames)
-        enough_speech = self.voiced >= 9
-        self.frames.clear()
-        self.quiet = self.voiced = 0
-        if not enough_speech:
-            self.partial("")
+    def publish(self, text, language, speaker):
+        translation = self.languages.get(language)
+        direction = {"en": "EN → RU", "ru": "RU → EN"}.get(language, language.upper())
+        # Argos models translate a sentence at a time; a second sentence can be omitted
+        # if it is appended to a long first sentence in the same translation request.
+        for sentence in re.split(r'(?<=[.!?…])\s+(?=[A-ZА-ЯЁ«"])', text):
+            translated = translation.translate(sentence) if translation else "Перевод доступен для русского и английского."
+            self.line(sentence, translated, speaker, direction)
+
+    def finish(self, final):
+        pcm = bytes(self.frames)
+        if final:
+            self.frames.clear()
+            self.quiet = 0
+        if self.voiced < 6:
+            self.voiced = 0
             return
-        self.partial("Определяю язык…")
-        samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
-        segments, info = self.model.transcribe(samples, task="transcribe", language=None,
-                                              beam_size=3, temperature=0, condition_on_previous_text=False)
-        text = " ".join(seg.text.strip() for seg in segments).strip()
-        if text:
-            language = self.languages.get(info.language)
-            translated = language.translate(text) if language else "Перевод доступен для русского и английского."
-            who = None
-            if self.speaker_decoder is not None:
-                self.speaker_decoder.AcceptWaveform(pcm)
-                who = self.speakers.label(json.loads(self.speaker_decoder.FinalResult()))
-                self.speaker_decoder.Reset()
-            tag = {"en": "EN → RU", "ru": "RU → EN"}.get(info.language, info.language.upper())
-            self.line(text, translated, who, tag)
-        self.partial("")
+        samples = np.frombuffer(pcm, "<i2").astype(np.float32) / 32768
+        language, confidence, _ = self.model.detect_language(audio=samples)
+        fresh = self.clock - len(samples) - self.last_voice < 15 * RATE
+        who = None
+        if self.speaker_decoder is not None:
+            self.speaker_decoder.AcceptWaveform(pcm)
+            who = self.speakers.label(json.loads(self.speaker_decoder.FinalResult()))
+            self.speaker_decoder.Reset()
+        same_turn = fresh and language == self.previous_language and who == self.previous_speaker
+        words = []
+        if confidence >= (0.42 if language in self.languages else 0.75):
+            segments, _ = self.model.transcribe(
+                np.pad(samples, (0, 12800)) if final else samples,
+                language=language, beam_size=3, temperature=0, word_timestamps=True,
+                condition_on_previous_text=True, initial_prompt=self.previous_text if same_turn else None,
+                repetition_penalty=1.08, no_repeat_ngram_size=5)
+            for seg in segments:
+                if reliable(seg):
+                    words.extend(seg.words or [])
+        if not final:
+            # Prefer punctuation away from the uncertain right edge. Otherwise keep the
+            # unfinished sentence as text and re-decode its audio tail with the next window.
+            stable = [i for i, w in enumerate(words) if 1 <= w.end <= 21]
+            ends = [i for i in stable if END_OF_SENTENCE.search(words[i].word.strip())]
+            cut = ends[-1] if ends else (stable[-1] if stable else None)
+            boundary = words[cut].end if cut is not None else 18.0
+            if cut is not None and cut + 1 < len(words):
+                boundary = (boundary + max(boundary, words[cut + 1].start)) / 2
+            del self.frames[:int(min(boundary, 22) * RATE) * 2]
+            words = words[:cut + 1] if cut is not None else []
+        self.voiced = 0 if final else min(6, len(self.frames) // (FRAME * 2))
+        text = "".join(w.word for w in words).strip()
+        if final and words:
+            # Whisper can emit an end token before the last spoken words of a clip.
+            tail = samples[round(words[-1].end * RATE):]
+            if len(tail) >= RATE * 0.6 and get_speech_timestamps(tail, threshold=0.6, min_speech_duration_ms=160):
+                rest, _ = self.model.transcribe(np.pad(tail, (0, 12800)), language=language, beam_size=3,
+                                                temperature=0, condition_on_previous_text=False,
+                                                no_repeat_ngram_size=5)
+                suffix = " ".join(seg.text.strip() for seg in rest if reliable(seg))
+                text = (text + " " + suffix).strip()
+        if not text:
+            if final:
+                self.flush_text()
+            return
+        if not same_turn:
+            self.flush_text()
+            self.previous_text = ""
+        self.previous_language, self.previous_speaker = language, who
+        self.previous_text = " ".join((self.previous_text + " " + text).split()[-40:])
+        self.last_voice = self.clock
+        combined = (self.unfinished + " " + text).strip()
+        if final or END_OF_SENTENCE.search(text) or len(combined) >= 1000:
+            self.unfinished = ""
+            self.publish(combined, language, who)
+            self.partial("")
+        else:
+            self.unfinished = combined
+            self.partial(combined)
+
+    def flush_text(self):
+        if self.unfinished:
+            self.publish(self.unfinished, self.previous_language, self.previous_speaker)
+            self.unfinished = ""
+            self.partial("")
 
     def flush(self):
-        if self.pending and self.frames:
-            self.frames.append(bytes(self.pending))
+        if self.frames:
+            self.frames.extend(self.pending)
+            self.finish(final=True)
+        self.flush_text()
         self.pending.clear()
         self.lead.clear()
-        if self.frames:
-            self.finish()
+        self.onset = self.quiet = self.voiced = 0
+        self.gate.reset()

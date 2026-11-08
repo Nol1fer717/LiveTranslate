@@ -99,7 +99,10 @@ class SessionSpeakers:
 def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None):
     """Capture continuously while speech recognition and translation consume queued blocks."""
     chunks = queue.Queue(maxsize=200)
-    overflow = threading.Event()
+    analysis = queue.Queue(maxsize=6000)  # Up to ten minutes of compact mono PCM if inference falls behind.
+    errors = []
+    gap = object()
+    end = object()
     rate = int(device["defaultSampleRate"])
     channels = int(device["maxInputChannels"])
     speakers = SessionSpeakers() if speaker_model is not None else None
@@ -114,16 +117,13 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                                   lambda text: emit("partial", target, text))
     resampler = None
     partial = ""
-    heard = False
-    last_audio = time.monotonic()
 
     def callback(data, count, timing, flags):
-        if flags & pa.paInputOverflow:
-            overflow.set()
         try:
-            chunks.put_nowait(data)
+            chunks.put_nowait((data, time.monotonic(), flags))
         except queue.Full:
-            overflow.set()
+            stop.set()
+            errors.append(RuntimeError("Не удалось вовремя считать звук с устройства."))
         return None, pa.paContinue
 
     def publish(result):
@@ -142,6 +142,32 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         else:
             publish(decoder.FinalResult())
             decoder.Reset()
+
+    def recognize():
+        nonlocal partial
+        try:
+            for item in iter(analysis.get, end):
+                if item is gap:
+                    flush()
+                elif automatic is not None:
+                    automatic.accept(item)
+                elif decoder.AcceptWaveform(item):
+                    publish(decoder.Result())
+                else:
+                    current = json.loads(decoder.PartialResult()).get("partial", "")
+                    if current != partial:
+                        partial = current
+                        emit("partial", target, partial)
+            flush()
+        except Exception as exc:
+            errors.append(exc)
+            stop.set()
+
+    def submit(item):
+        try:
+            analysis.put_nowait(item)
+        except queue.Full:
+            raise RuntimeError("Распознавание отстало более чем на десять минут.")
 
     with ExitStack() as stack:
         # PortAudio initializes COM on its owner thread. Each WASAPI worker also needs it.
@@ -165,38 +191,71 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
             writer = stack.enter_context(wave.open(str(record_path), "wb"))
             writer.setparams((1, 2, 16000, 0, "NONE", ""))
         with DEVICE_LOCK:
+            started = time.monotonic()
             stream.start_stream()
+        worker = threading.Thread(target=recognize)
+        worker.start()
         emit("ready", target, None)
-        while True:
-            if stop.is_set() and stream.is_active():
-                stream.stop_stream()
+        last_packet = started
+        in_gap = False
+        captured_until = None
+
+        def pad_recording(until):
+            if writer is None:
+                return
+            missing = round((until - started) * 16000) - writer.tell()
+            while missing > 0:
+                count = min(16000, missing)
+                writer.writeframesraw(bytes(2 * count))
+                missing -= count
+
+        try:
+            while True:
+                if stop.is_set() and captured_until is None:
+                    captured_until = time.monotonic()
+                    if stream.is_active():
+                        stream.stop_stream()
+                try:
+                    data, arrival, flags = chunks.get(timeout=0.1)
+                except queue.Empty:
+                    if stop.is_set():
+                        if captured_until is not None:
+                            break
+                        continue
+                    if not stream.is_active():
+                        raise RuntimeError("Аудиоустройство отключено.")
+                    if not in_gap and time.monotonic() - last_packet >= 1.3:
+                        submit(gap)
+                        in_gap = True
+                    continue
+                packet_start = arrival - len(data) / (2 * channels * rate)
+                missing = packet_start - last_packet
+                if missing > 0.18 or flags & pa.paInputOverflow:
+                    pad_recording(packet_start)
+                    resampler = None
+                    if missing >= 1.3 and not in_gap:
+                        submit(gap)
+                pcm, resampler = audioop.ratecv(mono16(data, channels), 2, 1, rate, 16000, resampler)
+                if writer:
+                    writer.writeframesraw(pcm)
+                last_packet = arrival
+                in_gap = False
+                if not errors:
+                    submit(pcm)
+        finally:
             try:
-                data = chunks.get(timeout=0.1)
-            except queue.Empty:
-                if stop.is_set():
-                    break
-                if not stream.is_active():
-                    raise RuntimeError("Аудиоустройство отключено.")
-                # Some WASAPI endpoints send no packets during silence.
-                if heard and time.monotonic() - last_audio > 0.8:
-                    flush()
-                    heard = False
-                continue
-            if overflow.is_set():
-                raise RuntimeError("Переполнен буфер звука. Закройте тяжёлые приложения и повторите запуск.")
-            last_audio = time.monotonic()
-            pcm, resampler = audioop.ratecv(mono16(data, channels), 2, 1, rate, 16000, resampler)
-            if writer:
-                writer.writeframesraw(pcm)
-            heard = True
-            if automatic is not None:
-                automatic.accept(pcm)
-            elif decoder.AcceptWaveform(pcm):
-                publish(decoder.Result())
-            else:
-                current = json.loads(decoder.PartialResult()).get("partial", "")
-                if current != partial:
-                    partial = current
-                    emit("partial", target, partial)
-        if heard:
-            flush()
+                if stream.is_active():
+                    stream.stop_stream()
+                pad_recording(captured_until if captured_until is not None else time.monotonic())
+                if writer:
+                    writer.close()
+            finally:
+                while worker.is_alive():
+                    try:
+                        analysis.put(end, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                worker.join()
+        if errors:
+            raise errors[0]
