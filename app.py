@@ -7,10 +7,11 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from vosk import SpkModel
-from engine import Language, SPEAKER_PATH, capture, devices
+from engine import DATA, Language, SPEAKER_PATH, capture, devices
+from whisper_stream import load_whisper
 
 SOURCES = ("Микрофон", "Звук компьютера")
-DIRECTIONS = ("Русский → Английский", "Английский → Русский")
+DIRECTIONS = ("Авто · Whisper", "Русский → Английский", "Английский → Русский")
 
 
 class Channel:
@@ -30,7 +31,7 @@ class Channel:
                                                  state="normal" if available else "disabled")
             self.speaker_check.pack(side="left", padx=(10, 0))
         self.direction = ttk.Combobox(panel, values=DIRECTIONS, state="readonly", width=23)
-        self.direction.current(index)
+        self.direction.current(0)
         self.direction.grid(row=0, column=1, sticky="e")
         self.device = ttk.Combobox(panel, state="readonly")
         self.device.grid(row=1, column=0, columnspan=2, sticky="ew", pady=7)
@@ -50,10 +51,11 @@ class Channel:
         self.device.configure(values=names)
         self.device.current(1 if devices else 0)
 
-    def line(self, source, target, speaker=None):
+    def line(self, source, target, speaker=None, direction=None):
         self.history.configure(state="normal")
-        if speaker:
-            self.history.insert("end", speaker + "\n", "speaker")
+        label = " · ".join(item for item in (speaker, direction) if item)
+        if label:
+            self.history.insert("end", label + "\n", "speaker")
         self.history.insert("end", source + "\n", "source")
         self.history.insert("end", target + "\n", "target")
         self.history.see("end")
@@ -108,6 +110,7 @@ class App:
         self.closing = False
         self.cache = {}
         self.speaker_model = None
+        self.whisper = None
         self.scan()
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.poll()
@@ -133,7 +136,7 @@ class App:
         for index, channel in enumerate(self.channels):
             device = channel.items[channel.device.current()]
             if device:
-                lang = ("ru", "en")[channel.direction.current()]
+                lang = ("auto", "ru", "en")[channel.direction.current()]
                 selected.append((index, device, lang))
         if not selected:
             self.status.set("Выберите хотя бы одно устройство.")
@@ -170,7 +173,9 @@ class App:
             try:
                 path = folder / ("microphone.wav", "computer.wav")[index] if folder else None
                 speaker_model = self.speaker_model if index == 1 and detect else None
-                capture(audio, device, self.cache[lang], index, stop, emit, path, speaker_model)
+                automatic = lang == "auto"
+                capture(audio, device, self.cache if automatic else self.cache[lang],
+                        index, stop, emit, path, speaker_model, self.whisper if automatic else None)
             except Exception as exc:
                 emit("error", index, str(exc))
                 stop.set()
@@ -182,8 +187,11 @@ class App:
             for index, device, lang in selected:
                 if stop.is_set():
                     break
-                if lang not in self.cache:
-                    self.cache[lang] = Language(lang)
+                if lang == "auto" and self.whisper is None:
+                    self.whisper = load_whisper(DATA / "whisper-base")
+                for src in (("ru", "en") if lang == "auto" else (lang,)):
+                    if src not in self.cache:
+                        self.cache[src] = Language(src)
             with pa.PyAudio() as audio:
                 try:
                     for item in selected:

@@ -16,6 +16,7 @@ import numpy as np
 import pyaudiowpatch as pa
 import sentencepiece
 from vosk import KaldiRecognizer, Model, SetLogLevel
+from whisper_stream import WhisperStream
 
 ROOT = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 DATA = ROOT / "data"
@@ -95,17 +96,22 @@ class SessionSpeakers:
         return f"Голос {len(self.centres)}"
 
 
-def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None):
+def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None):
     """Capture continuously while speech recognition and translation consume queued blocks."""
     chunks = queue.Queue(maxsize=200)
     overflow = threading.Event()
     rate = int(device["defaultSampleRate"])
     channels = int(device["maxInputChannels"])
-    decoder = KaldiRecognizer(language.speech, 16000)
-    speakers = None
-    if speaker_model is not None:
-        decoder.SetSpkModel(speaker_model)
-        speakers = SessionSpeakers()
+    speakers = SessionSpeakers() if speaker_model is not None else None
+    automatic = None
+    if whisper is None:
+        decoder = KaldiRecognizer(language.speech, 16000)
+        if speakers is not None:
+            decoder.SetSpkModel(speaker_model)
+    else:
+        automatic = WhisperStream(whisper, language, speaker_model, speakers,
+                                  lambda *line: emit("line", target, line),
+                                  lambda text: emit("partial", target, text))
     resampler = None
     partial = ""
     heard = False
@@ -129,6 +135,13 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
             emit("line", target, (text, language.translate(text), who))
         partial = ""
         emit("partial", target, "")
+
+    def flush():
+        if automatic is not None:
+            automatic.flush()
+        else:
+            publish(decoder.FinalResult())
+            decoder.Reset()
 
     with ExitStack() as stack:
         # PortAudio initializes COM on its owner thread. Each WASAPI worker also needs it.
@@ -166,8 +179,7 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                     raise RuntimeError("Аудиоустройство отключено.")
                 # Some WASAPI endpoints send no packets during silence.
                 if heard and time.monotonic() - last_audio > 0.8:
-                    publish(decoder.FinalResult())
-                    decoder.Reset()
+                    flush()
                     heard = False
                 continue
             if overflow.is_set():
@@ -177,7 +189,9 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
             if writer:
                 writer.writeframesraw(pcm)
             heard = True
-            if decoder.AcceptWaveform(pcm):
+            if automatic is not None:
+                automatic.accept(pcm)
+            elif decoder.AcceptWaveform(pcm):
                 publish(decoder.Result())
             else:
                 current = json.loads(decoder.PartialResult()).get("partial", "")
@@ -185,4 +199,4 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                     partial = current
                     emit("partial", target, partial)
         if heard:
-            publish(decoder.FinalResult())
+            flush()

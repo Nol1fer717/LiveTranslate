@@ -1,18 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from pathlib import Path
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, collect_delvewheel_libs_directory
 
 binaries = []
 binaries += collect_dynamic_libs('vosk')
 binaries += collect_dynamic_libs('ctranslate2')
+datas = collect_data_files('faster_whisper')
+datas, binaries = collect_delvewheel_libs_directory('av', datas=datas, binaries=binaries)
 
 
 a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=binaries,
-    datas=[],
-    hiddenimports=['_cffi_backend'],
-    hookspath=[],
+    datas=datas,
+    hiddenimports=['_cffi_backend', 'huggingface_hub.file_download', 'huggingface_hub._snapshot_download'],
+    hookspath=[str(Path(SPECPATH) / 'hooks')],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
