@@ -1,0 +1,5 @@
+PyAudioWPatch==0.2.12.9
+vosk==0.3.45
+ctranslate2==4.8.5
+sentencepiece==0.2.3
+numpy==2.5.4
