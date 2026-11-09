@@ -16,6 +16,12 @@ try {
     & $python -m PyInstaller --noconfirm --workpath (Join-Path $buildRoot "work") --distpath $distRoot VoiceTranslator.spec
     if ($LASTEXITCODE) { throw "PyInstaller failed: $LASTEXITCODE" }
     Move-Item -LiteralPath (Join-Path $payload "VoiceTranslator.exe") -Destination (Join-Path $payload "LiveTranslate.exe")
+    & $python -m PyInstaller --noconfirm --onefile --windowed --name model_downloader `
+        --workpath (Join-Path $buildRoot "downloader-work") --distpath (Join-Path $buildRoot "downloader-dist") `
+        --specpath $buildRoot --add-data ((Join-Path $PSScriptRoot "packages.json") + ";.") `
+        (Join-Path $PSScriptRoot "model_downloader.py")
+    if ($LASTEXITCODE) { throw "Downloader build failed: $LASTEXITCODE" }
+    Copy-Item -LiteralPath (Join-Path $buildRoot "downloader-dist\model_downloader.exe") -Destination $payload
     $licenses = Join-Path $payload "licenses"
     New-Item -ItemType Directory -Path $licenses | Out-Null
     Get-ChildItem -LiteralPath (Join-Path $project ".venv\Lib\site-packages") -Filter "*.dist-info" -Directory |

@@ -1,0 +1,414 @@
+[
+  {
+    "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+    "name": "model.bin",
+    "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+    "task": null,
+    "files": [
+      {
+        "path": "data/whisper-small/model.bin",
+        "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
+      }
+    ]
+  },
+  {
+    "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json",
+    "name": "config.json",
+    "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+    "task": null,
+    "files": [
+      {
+        "path": "data/whisper-small/config.json",
+        "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828"
+      }
+    ]
+  },
+  {
+    "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+    "name": "tokenizer.json",
+    "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+    "task": null,
+    "files": [
+      {
+        "path": "data/whisper-small/tokenizer.json",
+        "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab"
+      }
+    ]
+  },
+  {
+    "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt",
+    "name": "vocabulary.txt",
+    "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+    "task": null,
+    "files": [
+      {
+        "path": "data/whisper-small/vocabulary.txt",
+        "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+      }
+    ]
+  },
+  {
+    "url": "https://argos-net.com/v1/translate-en_ru-1_9.argosmodel",
+    "name": "translate-en_ru-1_9.zip",
+    "sha256": "591d743ae103752b88ffc38785c50421320f4eff93c8967e0d3d2e14d4e27811",
+    "task": null,
+    "files": [
+      {
+        "path": "data/translate-en_ru-1_9/metadata.json",
+        "sha256": "a40657925da1c25d98d8a6bc53c436a5b1179bd8771e016147d88587edf1b529"
+      },
+      {
+        "path": "data/translate-en_ru-1_9/model/config.json",
+        "sha256": "3f1a3cc20b961c1fe0e6007e8ca663730c4a8b82fa54073fde03edf1402c6726"
+      },
+      {
+        "path": "data/translate-en_ru-1_9/model/model.bin",
+        "sha256": "c262cce6a506447d4b3c7a899787694df13783340ba67f0df3ecbf046ae27924"
+      },
+      {
+        "path": "data/translate-en_ru-1_9/model/shared_vocabulary.json",
+        "sha256": "5e39116c77f19b90841f9b0d0dbe4e38ecf6eadd43dff40ea1415104f441c720"
+      },
+      {
+        "path": "data/translate-en_ru-1_9/README.md",
+        "sha256": "ae9d1fa7d28837433eb979e5e442c3907fa84d10458ff9f3d23eb372bf0061cd"
+      },
+      {
+        "path": "data/translate-en_ru-1_9/sentencepiece.model",
+        "sha256": "cdd7fd3f6b069cd1baa90d95682ec6851119ae0d734438ba85d3678b2f1e2a66"
+      },
+      {
+        "path": "data/translate-en_ru-1_9/stanza/en/tokenize/ewt.pt",
+        "sha256": "7bc5a1523f4e60107640ea44d2cb27c787bc339ba0c93be6c7dbf744d5635cd6"
+      },
+      {
+        "path": "data/translate-en_ru-1_9/stanza/resources.json",
+        "sha256": "39faaee80e6cca9e211dcda8fb3da4f9c024dcff5b4bfc9832a8e0e271db2fda"
+      }
+    ]
+  },
+  {
+    "url": "https://argos-net.com/v1/translate-ru_en-1_9.argosmodel",
+    "name": "translate-ru_en-1_9.zip",
+    "sha256": "e9ba8bf722d10a4a4c39f74289d5938fd47eac08dbe4ed0afd22d89445a5c3ac",
+    "task": null,
+    "files": [
+      {
+        "path": "data/translate-ru_en-1_9/metadata.json",
+        "sha256": "2034d666010673068722bc15af5bb8561173665872867c89a1b99695f0fb25d0"
+      },
+      {
+        "path": "data/translate-ru_en-1_9/model/config.json",
+        "sha256": "3f1a3cc20b961c1fe0e6007e8ca663730c4a8b82fa54073fde03edf1402c6726"
+      },
+      {
+        "path": "data/translate-ru_en-1_9/model/model.bin",
+        "sha256": "026d5f34266b4235c13fc29c665f151b88d0c1b02b0be7f87734fe9c511e20bc"
+      },
+      {
+        "path": "data/translate-ru_en-1_9/model/shared_vocabulary.json",
+        "sha256": "32d134b048b6a27a48ba7fad9154976743b9bed9cbef7080b952108374d1cea1"
+      },
+      {
+        "path": "data/translate-ru_en-1_9/README.md",
+        "sha256": "5a157fd062b9786eb4c7d5aa8fce0f3f01de0fa71c2f34fbf16e222c66ecd090"
+      },
+      {
+        "path": "data/translate-ru_en-1_9/sentencepiece.model",
+        "sha256": "d324f59d3b5ba04d9b088e162b5e779e27a5eb72d56ec8e5e69a9efc1bf8f495"
+      },
+      {
+        "path": "data/translate-ru_en-1_9/stanza/resources.json",
+        "sha256": "39faaee80e6cca9e211dcda8fb3da4f9c024dcff5b4bfc9832a8e0e271db2fda"
+      },
+      {
+        "path": "data/translate-ru_en-1_9/stanza/ru/tokenize/syntagrus.pt",
+        "sha256": "a28c7770bd33220f61b5ab060c9aaebe62354771f557683875602d1c2a38fefc"
+      }
+    ]
+  },
+  {
+    "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+    "name": "vosk-model-small-en-us-0.15.zip",
+    "sha256": "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498",
+    "task": null,
+    "files": [
+      {
+        "path": "data/vosk-model-small-en-us-0.15/am/final.mdl",
+        "sha256": "75370a0137f9daf8f469dedd7daa4513ae7a621f03240c6e512e2b50b656a7b6"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/conf/mfcc.conf",
+        "sha256": "1e2228006d01d805ad1c267fee9f79709ca87ac51bd82b0e3f5c69ba543f0fc4"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/conf/model.conf",
+        "sha256": "8f14cb1eeb07c762c371db648c6be688d347236155ca0f64fb13b6567a8ce81f"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/graph/disambig_tid.int",
+        "sha256": "9ad87cc166d0998f08f758f47a6223a120dfffcbee805c4849c3aa5e6bb3c0fc"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/graph/Gr.fst",
+        "sha256": "023c8b7e30704a9e37765c635c252e608a02f361235bf94abdcf2a5225d85b20"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/graph/HCLr.fst",
+        "sha256": "5caafba3081e1646545ac6bff0dd7a318e53dcbdc86f237909ce1d2ac1293d34"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/graph/phones/word_boundary.int",
+        "sha256": "da199d9c991e0e84681ddbb34627b915b26302d50a8fdaa23c51e2bc3a50b5c3"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/ivector/final.dubm",
+        "sha256": "8c5d7dd69d2122313baaf19f61f35dd3fa18b70c62ac0687e311e1c46e6daca7"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/ivector/final.ie",
+        "sha256": "3f37faf90c375b9e4740b569398b5829ed9cc07d19be6d441f72c3b71d7efcc6"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/ivector/final.mat",
+        "sha256": "ddd83586dc5f928cda8738b922c85ffe38fc789cb5f9151a712ca12f37265382"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/ivector/global_cmvn.stats",
+        "sha256": "33be09afcc80059847a275c3d043b51f1ab954c7c2438ddbbf4745e8ba144ff9"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/ivector/online_cmvn.conf",
+        "sha256": "a2f3571754b64297cb7efb2e7ca3df61995c5a45fcbb97188f90613552bb2dfe"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/ivector/splice.conf",
+        "sha256": "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756"
+      },
+      {
+        "path": "data/vosk-model-small-en-us-0.15/README",
+        "sha256": "c0cf286e4f7783306c5f6469b37db69228fb16803b03cae661edb2d7bba64ebb"
+      }
+    ]
+  },
+  {
+    "url": "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip",
+    "name": "vosk-model-small-ru-0.22.zip",
+    "sha256": "961d5ff98a17f4aa6de69864d0aa71fa5bac682301d2b5d17a3f24c5c99a46d4",
+    "task": null,
+    "files": [
+      {
+        "path": "data/vosk-model-small-ru-0.22/am/final.mdl",
+        "sha256": "36d67b53dc90d96ea48097f9e17e7c5937689ad76cb8bed25091317bbaf25919"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/conf/mfcc.conf",
+        "sha256": "1e2228006d01d805ad1c267fee9f79709ca87ac51bd82b0e3f5c69ba543f0fc4"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/conf/model.conf",
+        "sha256": "dd7178da0e99fdbe489816c1e9702c3daa28e02accacc2993e0becb7af33b80c"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/graph/disambig_tid.int",
+        "sha256": "c3af3dbc5eb301c4b282480d785c04b1642a8db83210a12332e9790e50146fd2"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/graph/Gr.fst",
+        "sha256": "189b4f67c69eb34b9d8b47b12f184665e5445667ca5264579b61c6b9eb2cef1e"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/graph/HCLr.fst",
+        "sha256": "0b096f4676f306aa3e60d2244ef1e24c5c699b8794acf3c3946b59bcc9dca831"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/graph/phones/word_boundary.int",
+        "sha256": "23081404fe1cc7338c013a4beec133637147d60472c06ab64ff88ee3d028a7b5"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/ivector/final.dubm",
+        "sha256": "7dffe22bd992d7274fba925632bded4756d82dfd9b962d3c703110251fdf35b8"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/ivector/final.ie",
+        "sha256": "94f2558d00fe199ac01409281352eb16707ec075baaf9cc0d7b53011583cfa0e"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/ivector/final.mat",
+        "sha256": "956577d396b636fe359b4321f10df5ed6a76bdfdec366b4a2b7d3242e524f04f"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/ivector/global_cmvn.stats",
+        "sha256": "c600cbf4acfbfac99d587040d48dc31129cd635b112ff15bfa2e9d3b0cece1f8"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/ivector/online_cmvn.conf",
+        "sha256": "a2f3571754b64297cb7efb2e7ca3df61995c5a45fcbb97188f90613552bb2dfe"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/ivector/splice.conf",
+        "sha256": "9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756"
+      },
+      {
+        "path": "data/vosk-model-small-ru-0.22/README",
+        "sha256": "b662517cacda14945e159538d6dd8faff23bd706e024c4fb338b6013c9939b9e"
+      }
+    ]
+  },
+  {
+    "url": "https://argos-net.com/v1/translate-de_en-1_9.argosmodel",
+    "name": "translate-de_en-1_9.zip",
+    "sha256": "4de45bb5801c25cf7d776c075c8eb71fac0667d5c9164c0dd9a38b06eaa5f20e",
+    "task": "german",
+    "files": [
+      {
+        "path": "data/translate-de_en-1_9/bpe.model",
+        "sha256": "b3d207a4acb0bc79d7007abc737e9a2506cd047e9db8583a699a46d5ea55f4c8"
+      },
+      {
+        "path": "data/translate-de_en-1_9/metadata.json",
+        "sha256": "6aab985a530443d26377433e4c0657b77b0c2ccc7fc95456b4580fd536f74aec"
+      },
+      {
+        "path": "data/translate-de_en-1_9/model/config.json",
+        "sha256": "152eb448f1020eb55f90971d7b95f61896abee8415d555ca51ae7897ac0a0e68"
+      },
+      {
+        "path": "data/translate-de_en-1_9/model/model.bin",
+        "sha256": "2f3102de3591cc933e0bec5bdafe5766cf38f197362b35c52447f6753491cea4"
+      },
+      {
+        "path": "data/translate-de_en-1_9/model/shared_vocabulary.json",
+        "sha256": "0615b28b31de753e1d3655f259ee9a3fcc9f55265eea8b8122df405b6a5c468d"
+      },
+      {
+        "path": "data/translate-de_en-1_9/README.md",
+        "sha256": "950b0a064c8166983e584c7cb764635aa8c0ee67744bcc0f2a4952b178e5d4af"
+      },
+      {
+        "path": "data/translate-de_en-1_9/stanza/de/tokenize/gsd.pt",
+        "sha256": "b91699d505c9a3c87ed30f11becb234bde5b8bfc2d0d37a51caaaa80bbf79075"
+      },
+      {
+        "path": "data/translate-de_en-1_9/stanza/resources.json",
+        "sha256": "39faaee80e6cca9e211dcda8fb3da4f9c024dcff5b4bfc9832a8e0e271db2fda"
+      }
+    ]
+  },
+  {
+    "url": "https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip",
+    "name": "vosk-model-spk-0.4.zip",
+    "sha256": "a74d8f51144484813e16af689bb0f916b7a111e2347f467c4933c1166097b5a7",
+    "task": "speakers",
+    "files": [
+      {
+        "path": "data/vosk-model-spk-0.4/final.ext.raw",
+        "sha256": "d30354474ac719b3cfce58186463302b988cf22ce3afee7237a2da862c4a91d1"
+      },
+      {
+        "path": "data/vosk-model-spk-0.4/mean.vec",
+        "sha256": "3bc5dfa9479c3aaacf4f45c155e9bd4772785449112566fac23578c09e93bcd7"
+      },
+      {
+        "path": "data/vosk-model-spk-0.4/mfcc.conf",
+        "sha256": "86f4df625b950b81b68864fdefabf26aa65079f84ea20f40e7f9e7ccbb9c456c"
+      },
+      {
+        "path": "data/vosk-model-spk-0.4/README.txt",
+        "sha256": "df0a2ab600c337475b65fd4d6f29a1b9b18e09fc0211b5a7a4820dce82d4e23a"
+      },
+      {
+        "path": "data/vosk-model-spk-0.4/transform.mat",
+        "sha256": "fab14481fb27c41df0f1825afe18530e4f6d128dbb2c239ee86d8d7096e22c33"
+      }
+    ]
+  },
+  {
+    "url": "https://files.pythonhosted.org/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
+    "name": "cublas.zip",
+    "sha256": "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661",
+    "task": "nvidia",
+    "files": [
+      {
+        "path": "_internal/nvidia/cublas/bin/cublas64_12.dll",
+        "sha256": "52ce5ba0ec5327d39be6021f0f9362d2ed4d64d7206f9b5afc06398d827b8e82"
+      },
+      {
+        "path": "_internal/nvidia/cublas/bin/cublasLt64_12.dll",
+        "sha256": "71705a7cf0923f4ab034d0d2620bbfc989ff669ac3d79f868b7a7c597ca559c5"
+      },
+      {
+        "path": "_internal/nvidia/cublas/bin/nvblas64_12.dll",
+        "sha256": "f54ac264becdb8ac866cbc0cce74f1dfe0e0c1f6e60a0629f222490d210302cd"
+      }
+    ]
+  },
+  {
+    "url": "https://files.pythonhosted.org/packages/c7/bd/1d6709d2223e99f04079f16005f8ae6e11a14ee16b5eab6833686cf72fe1/nvidia_cudnn_cu12-9.28.1.4-py3-none-win_amd64.whl",
+    "name": "cudnn.zip",
+    "sha256": "3467aafa9b260e6adf5fbbfc0e21d180133305b42032aa1160be2d3142bb8b09",
+    "task": "nvidia",
+    "files": [
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn64_9.dll",
+        "sha256": "24b25ac28759abdc02cf08df0c4bb24930de6c91c12210e6792c0b092d48d242"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_adv64_9.dll",
+        "sha256": "05b470689984bc7e0f9814e04c0e757fd48d55439d44ed28dffff5c45a4f37f7"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_cnn64_9.dll",
+        "sha256": "556639d57c09ec3e988281a9804e8339052c82868b37d290add25994d2ade66f"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_engines_precompiled64_9.dll",
+        "sha256": "8e1e612a25a62dae60145c01d0261c73ffd43b0ac646b2338c559445cef88cfe"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_engines_runtime_compiled64_9.dll",
+        "sha256": "fc3e56c7f7f7269c510684cd86821c386bfc39a04954aa32264b802687d80ff4"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_engines_tensor_ir64_9.dll",
+        "sha256": "1abaec2e51f33b61d7149247da364d7844b2f18469ed7f07a3720860c668bff2"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_ext64_9.dll",
+        "sha256": "0c8c2e8f6238a5e2b0386862f18fc32ca8cd04caec1acc327715e35935fd4a44"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_graph64_9.dll",
+        "sha256": "3d0338c111bffce696c0c83c664d5f94ec02d08116cc7e2f8735ac4a1c06c509"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_heuristic64_9.dll",
+        "sha256": "3ae1d0255b86911739e7f4843e2c122abfac5cf452ac65730acdd3f563c2177d"
+      },
+      {
+        "path": "_internal/nvidia/cudnn/bin/cudnn_ops64_9.dll",
+        "sha256": "489e72dfa697c425c947768585e15bfb78700dd09cf4db1714be0ea2146f08d1"
+      }
+    ]
+  },
+  {
+    "url": "https://files.pythonhosted.org/packages/52/de/823919be3b9d0ccbf1f784035423c5f18f4267fb0123558d58b813c6ec86/nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-win_amd64.whl",
+    "name": "nvrtc.zip",
+    "sha256": "72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349",
+    "task": "nvidia",
+    "files": [
+      {
+        "path": "_internal/nvidia/cuda_nvrtc/bin/nvrtc-builtins64_129.dll",
+        "sha256": "c405226b0b394ed8bdc593bb1419b94a989f93248ed2873e8f2e0e27c1688ca1"
+      },
+      {
+        "path": "_internal/nvidia/cuda_nvrtc/bin/nvrtc64_120_0.alt.dll",
+        "sha256": "ac56a4d3b5a99f294523abec28b8f648b96324a9277622a450ec20ddb9e2c47d"
+      },
+      {
+        "path": "_internal/nvidia/cuda_nvrtc/bin/nvrtc64_120_0.dll",
+        "sha256": "0cc63349fedffeec1660b30955e8028b6e4e4c26cf1e41c56dc4569fd5eca82c"
+      }
+    ]
+  }
+]
