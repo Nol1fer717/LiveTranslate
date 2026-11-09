@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import queue
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -16,6 +17,31 @@ def package(name, data, task=None):
             'files':[{'path':'models/'+name, 'sha256':digest}]}
 
 class DownloaderTests(unittest.TestCase):
+    def test_extracts_only_verified_model_from_speaker_archive(self):
+        model = b'model data'
+        archive_bytes = io.BytesIO()
+        with tarfile.open(fileobj=archive_bytes, mode='w:bz2') as archive:
+            entry = tarfile.TarInfo('model/model.onnx'); entry.size = len(model)
+            archive.addfile(entry, io.BytesIO(model))
+        blob = archive_bytes.getvalue()
+        item = package('speaker.onnx', model, 'speakers')
+        item['sha256'] = hashlib.sha256(blob).hexdigest()
+        item['archive_member'] = 'model/model.onnx'
+        with tempfile.TemporaryDirectory() as tmp, patch.object(downloader, 'urlopen', return_value=io.BytesIO(blob)):
+            downloader.download(item, Path(tmp), threading.Event(), lambda n: None)
+            self.assertEqual((Path(tmp)/'speaker.onnx').read_bytes(), model)
+
+    def test_optional_gpu_failure_keeps_base_install_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); config = root/'packages.json'
+            config.write_text(json.dumps([package('base',b'base'), package('gpu',b'gpu','nvidia'), package('turbo',b'turbo','turbo')]),encoding='utf-8')
+            def fake_download(item, output, cancelled, notify):
+                if item['name'] == 'gpu': raise RuntimeError('offline')
+                (output/item['name']).write_bytes(item['name'].encode())
+            with patch.object(downloader,'CONFIG',config), patch.object(downloader,'download',side_effect=fake_download):
+                downloader.prepare(root/'none', root/'out', {'nvidia','turbo'}, threading.Event(), queue.SimpleQueue())
+            self.assertTrue((root/'out'/'base').is_file())
+            self.assertFalse((root/'out'/'turbo').exists())
     def test_existing_files_are_verified_and_only_missing_packages_are_downloaded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); target = root/'target'; output = root/'output'; (target/'models').mkdir(parents=True)

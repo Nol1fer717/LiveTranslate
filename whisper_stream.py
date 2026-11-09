@@ -13,6 +13,7 @@ import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.vad import get_speech_timestamps, get_vad_model
 from vosk import KaldiRecognizer
+from gpu_detection import nvidia_memory, supports_turbo
 
 
 RATE = 16000
@@ -34,7 +35,7 @@ def normalize_terms(text):
     return text
 
 
-def load_whisper(folder):
+def load_whisper(folder, turbo_folder=None):
     package_root = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(sys.prefix) / "Lib" / "site-packages"
     for name in ("cublas", "cudnn", "cuda_nvrtc"):
         directory = package_root / "nvidia" / name / "bin"
@@ -43,16 +44,29 @@ def load_whisper(folder):
             if str(directory) not in os.environ.get("PATH", "").split(os.pathsep):
                 os.environ["PATH"] = str(directory) + os.pathsep + os.environ.get("PATH", "")
     try:
-        if ctranslate2.get_cuda_device_count():
-            model = WhisperModel(str(folder), device="cuda", compute_type="float16", cpu_threads=3,
-                                 num_workers=2, local_files_only=True)
-            # Initialize CUDA and cuDNN before capture starts, and verify that inference works.
-            list(model.transcribe(np.zeros(RATE, dtype=np.float32), language="ru", beam_size=1)[0])
-            return model
+        cuda = ctranslate2.get_cuda_device_count() > 0
     except (RuntimeError, OSError):
-        pass
-    return WhisperModel(str(folder), device="cpu", compute_type="int8", cpu_threads=3,
-                        num_workers=2, local_files_only=True)
+        cuda = False
+    candidates = []
+    if cuda:
+        if turbo_folder is not None and turbo_folder.is_dir() and supports_turbo(nvidia_memory()):
+            candidates.append((turbo_folder, 'cuda', 'float16', 'Turbo'))
+        candidates.append((folder, 'cuda', 'float16', 'Small'))
+    candidates.append((folder, 'cpu', 'int8', 'Small'))
+    last_error = None
+    for model_folder, device, compute_type, name in candidates:
+        model = None
+        try:
+            model = WhisperModel(str(model_folder), device=device, compute_type=compute_type, cpu_threads=3,
+                                 num_workers=2, local_files_only=True)
+            # Verify CUDA and model compatibility before opening the capture device.
+            list(model.transcribe(np.zeros(RATE, dtype=np.float32), language='ru', beam_size=1)[0])
+            model.livetranslate_model_name = name
+            return model
+        except (RuntimeError, OSError, ValueError) as exc:
+            last_error = exc
+            del model
+    raise RuntimeError('Не удалось загрузить модель Whisper') from last_error
 
 
 def reliable(segment):

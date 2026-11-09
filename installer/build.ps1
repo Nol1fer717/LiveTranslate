@@ -18,7 +18,7 @@ try {
     Move-Item -LiteralPath (Join-Path $payload "VoiceTranslator.exe") -Destination (Join-Path $payload "LiveTranslate.exe")
     & $python -m PyInstaller --noconfirm --onefile --windowed --name model_downloader `
         --workpath (Join-Path $buildRoot "downloader-work") --distpath (Join-Path $buildRoot "downloader-dist") `
-        --specpath $buildRoot --add-data ((Join-Path $PSScriptRoot "packages.json") + ";.") `
+        --specpath $buildRoot --paths $project --collect-all huggingface_hub --collect-all hf_xet --add-data ((Join-Path $PSScriptRoot "packages.json") + ";.") `
         (Join-Path $PSScriptRoot "model_downloader.py")
     if ($LASTEXITCODE) { throw "Downloader build failed: $LASTEXITCODE" }
     Copy-Item -LiteralPath (Join-Path $buildRoot "downloader-dist\model_downloader.exe") -Destination $payload

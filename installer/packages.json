@@ -450,5 +450,105 @@
         "sha256": "39faaee80e6cca9e211dcda8fb3da4f9c024dcff5b4bfc9832a8e0e271db2fda"
       }
     ]
+  },
+  {
+    "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin",
+    "name": "turbo-model.bin",
+    "sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+    "task": "turbo",
+    "hf_repo": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "hf_revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "hf_file": "model.bin",
+    "files": [
+      {
+        "path": "data/whisper-turbo/model.bin",
+        "sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da"
+      }
+    ]
+  },
+  {
+    "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/config.json",
+    "name": "turbo-config.json",
+    "sha256": "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e",
+    "task": "turbo",
+    "hf_repo": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "hf_revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "hf_file": "config.json",
+    "files": [
+      {
+        "path": "data/whisper-turbo/config.json",
+        "sha256": "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e"
+      }
+    ]
+  },
+  {
+    "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/tokenizer.json",
+    "name": "turbo-tokenizer.json",
+    "sha256": "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+    "task": "turbo",
+    "hf_repo": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "hf_revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "hf_file": "tokenizer.json",
+    "files": [
+      {
+        "path": "data/whisper-turbo/tokenizer.json",
+        "sha256": "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd"
+      }
+    ]
+  },
+  {
+    "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/vocabulary.json",
+    "name": "turbo-vocabulary.json",
+    "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+    "task": "turbo",
+    "hf_repo": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "hf_revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "hf_file": "vocabulary.json",
+    "files": [
+      {
+        "path": "data/whisper-turbo/vocabulary.json",
+        "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1"
+      }
+    ]
+  },
+  {
+    "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/preprocessor_config.json",
+    "name": "turbo-preprocessor_config.json",
+    "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+    "task": "turbo",
+    "hf_repo": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "hf_revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "hf_file": "preprocessor_config.json",
+    "files": [
+      {
+        "path": "data/whisper-turbo/preprocessor_config.json",
+        "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"
+      }
+    ]
+  },
+  {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+    "name": "speaker-segmentation.onnx",
+    "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+    "task": "speakers",
+    "archive_member": "sherpa-onnx-pyannote-segmentation-3-0/model.onnx",
+    "files": [
+      {
+        "path": "data/speaker-segmentation.onnx",
+        "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
+      }
+    ]
+  },
+  {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx",
+    "name": "wespeaker-resnet34.onnx",
+    "sha256": "5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94",
+    "task": "speakers",
+    "files": [
+      {
+        "path": "data/wespeaker-resnet34.onnx",
+        "sha256": "5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94"
+      }
+    ]
   }
 ]

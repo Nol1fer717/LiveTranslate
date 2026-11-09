@@ -1,12 +1,53 @@
 """Local, incremental text translation with a single background worker."""
 import queue
+import re
 import threading
 import tkinter as tk
 from tkinter import ttk
 from engine import DATA, EnglishToGerman, GermanTranslation, Language
 from theme import BG, CARD, TEXT, MUTED, BORDER, SELECTION
 
-DIRECTIONS = {'Русский → Английский': 'ru', 'Английский → Русский': 'en', 'Немецкий → Русский': 'de', 'Русский → Немецкий': 'ru_de'}
+AUTO_LABEL = 'Автоматически'
+DIRECTIONS = {AUTO_LABEL: 'auto', 'Русский → Немецкий': 'ru_de'}
+LANGUAGE_LABELS = {'ru': 'Русский → Английский', 'en': 'Английский → Русский', 'de': 'Немецкий → Русский', 'ru_de': 'Русский → Немецкий'}
+GERMAN_WORDS = {'hallo', 'danke', 'bitte', 'tschüss', 'guten tag', 'guten morgen', 'guten abend', 'auf wiedersehen'}
+
+
+def detect_text_language(text, identifier):
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return None, False
+    russian = sum('а' <= c.lower() <= 'я' or c.lower() == 'ё' for c in letters)
+    latin = sum('a' <= c.lower() <= 'z' or c.lower() in 'äöüß' for c in letters)
+    if russian and latin:
+        return None, False
+    if russian == len(letters):
+        return 'ru', False
+    if latin != len(letters):
+        return None, False
+    normalized = text.strip().strip('.,!?;:«»"\' ').casefold()
+    if any(c in normalized for c in 'äöüß') or normalized in GERMAN_WORDS:
+        return 'de', False
+    language, confidence = identifier.classify(text)
+    if confidence < 0.8:
+        return 'en', True
+    return language, False
+
+# Only unambiguous, standalone conversational questions are normalized.  A
+# general punctuation guess would change the meaning of statements and fragments.
+QUESTION_FORMS = {
+    'ru': re.compile(r'(?:привет[, ]+)?(?:как дела|как у тебя дела|как у вас дела|как поживаешь|как поживаете|что случилось)', re.I),
+    'en': re.compile(r"(?:(?:hi|hello|hey)[, ]+)?(?:how are you|how are you doing|what up|whats up|what['’]s up|what happened)", re.I),
+    'de': re.compile(r"(?:wie geht es dir|wie geht es ihnen|wie geht['’]s|was ist passiert)", re.I),
+}
+
+
+def prepare_translation_text(text, source):
+    text = text.strip()
+    pattern = QUESTION_FORMS.get('ru' if source == 'ru_de' else source)
+    if pattern and pattern.fullmatch(text):
+        return text + '?'
+    return text
 
 class TranslatorUI:
     def __init__(self, tabs):
@@ -18,7 +59,8 @@ class TranslatorUI:
         controls = tk.Frame(self.page, bg=BG); controls.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 10))
         tk.Label(controls, text='Направление', bg=BG, fg=MUTED).pack(side='left', padx=(0, 8))
         self.direction = ttk.Combobox(controls, values=list(DIRECTIONS), state='readonly', width=28, style='Dark.TCombobox')
-        self.direction.current(0); self.direction.pack(side='left'); self.direction.bind('<<ComboboxSelected>>', self.changed)
+        self.direction_mode = 'auto'
+        self.direction.current(0); self.direction.pack(side='left'); self.direction.bind('<<ComboboxSelected>>', self.direction_selected)
         self.input = self.text_panel(0, 'Исходный текст'); self.output = self.text_panel(1, 'Перевод'); self.output.configure(state='disabled')
         self.input.bind('<<Modified>>', self.modified)
         self.input.bind('<Button-3>', self.context_menu)
@@ -30,8 +72,10 @@ class TranslatorUI:
         tk.Label(self.page, textvariable=self.status, bg=BG, fg=MUTED, anchor='w').grid(row=4, column=0, columnspan=2, sticky='ew', pady=(10, 0))
         self.requests = queue.Queue(maxsize=1); self.results = queue.SimpleQueue()
         self.generation = 0; self.debounce = None; self.closed = False; self.cache = {}
+        self.identifier = None
         self.job = self.page.after(100, self.poll)
-        threading.Thread(target=self.worker, daemon=True).start()
+        self.worker_thread = threading.Thread(target=self.worker, daemon=True)
+        self.worker_thread.start()
 
     def text_panel(self, column, label):
         pane = tk.Frame(self.page, bg=CARD, highlightthickness=1, highlightbackground=BORDER, padx=14, pady=12)
@@ -91,11 +135,17 @@ class TranslatorUI:
         if self.input.edit_modified():
             self.input.edit_modified(False); self.changed()
 
+    def direction_selected(self, event=None):
+        self.direction_mode = DIRECTIONS[self.direction.get()]
+        self.changed()
+
     def changed(self, event=None):
         self.generation += 1
         if self.debounce is not None: self.page.after_cancel(self.debounce); self.debounce = None
         text = self.input.get('1.0','end-1c').strip()
         self.set_output('')
+        if self.direction_mode == 'auto':
+            self.direction.set(AUTO_LABEL)
         if not text:
             self.status.set('Введите текст — перевод появится автоматически'); return
         self.status.set('Ожидаем завершения ввода…')
@@ -104,7 +154,8 @@ class TranslatorUI:
     def submit(self):
         if self.debounce is not None: self.page.after_cancel(self.debounce)
         self.debounce = None
-        item = (self.generation, self.input.get('1.0','end-1c').strip(), DIRECTIONS[self.direction.get()])
+        self.direction_mode = DIRECTIONS.get(self.direction.get(), self.direction_mode)
+        item = (self.generation, self.input.get('1.0','end-1c').strip(), self.direction_mode)
         if self.requests.full():
             try: self.requests.get_nowait()
             except queue.Empty: pass
@@ -117,6 +168,17 @@ class TranslatorUI:
             if item is None: return
             generation, text, source = item
             try:
+                uncertain = False
+                if source == 'auto':
+                    if self.identifier is None:
+                        from langid.langid import LanguageIdentifier, model
+                        self.identifier = LanguageIdentifier.from_modelstring(model, norm_probs=True)
+                        self.identifier.set_languages(['en', 'de'])
+                    source, uncertain = detect_text_language(text, self.identifier)
+                    if source is None:
+                        self.results.put((generation, False, 'Не удалось определить язык. Введите более длинный текст на одном языке.'))
+                        continue
+                    self.results.put((generation, 'detected', source))
                 if source == 'ru_de':
                     if not (DATA / 'translate-en_de-1_3').is_dir():
                         raise FileNotFoundError('Модель для перевода на немецкий не установлена. Выберите немецкий компонент в установщике.')
@@ -129,7 +191,9 @@ class TranslatorUI:
                     if 'de' not in self.cache: self.cache['de'] = GermanTranslation(self.cache['en'])
                 elif source not in self.cache:
                     self.cache[source] = Language(source, load_speech=False)
-                self.results.put((generation, True, self.cache[source].translate(text)))
+                result = self.cache[source].translate(prepare_translation_text(text, source))
+                message = LANGUAGE_LABELS[source] + (' · язык определён предположительно' if uncertain else '')
+                self.results.put((generation, True, (result, message)))
             except Exception as exc:
                 self.results.put((generation, False, str(exc) if isinstance(exc, FileNotFoundError) else 'Не удалось загрузить модель перевода. Проверьте установку приложения.'))
 
@@ -140,7 +204,10 @@ class TranslatorUI:
         while not self.results.empty():
             generation, ok, result = self.results.get()
             if generation != self.generation: continue
-            if ok: self.set_output(result); self.status.set('Перевод готов')
+            if ok == 'detected':
+                if self.direction_mode == 'auto': self.direction.set(LANGUAGE_LABELS[result])
+                continue
+            if ok: self.set_output(result[0]); self.status.set('Перевод готов · ' + result[1])
             else: self.set_output(''); self.status.set(result)
         self.job = self.page.after(100, self.poll)
 
@@ -152,3 +219,4 @@ class TranslatorUI:
             try: self.requests.get_nowait()
             except queue.Empty: pass
         self.requests.put_nowait(None)
+        self.worker_thread.join(timeout=2)

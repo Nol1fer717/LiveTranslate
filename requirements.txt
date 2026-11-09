@@ -8,3 +8,4 @@ av==16.1.0
 sacremoses==0.2.0
 subword-nmt==0.3.8
 sherpa-onnx==2.0.1
+langid==1.1.6

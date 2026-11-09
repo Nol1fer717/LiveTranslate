@@ -355,7 +355,7 @@ class App:
                 if stop.is_set():
                     break
                 if lang == "auto" and self.whisper is None:
-                    self.whisper = load_whisper(DATA / "whisper-small")
+                    self.whisper = load_whisper(DATA / "whisper-small", DATA / "whisper-turbo")
                 for src in (("ru", "en") if lang == "auto" else (lang,)):
                     if src not in self.cache:
                         self.cache[src] = Language(src)
@@ -415,6 +415,8 @@ class App:
                 if self.ready == self.active_count and not self.stop.is_set():
                     device = getattr(getattr(self.whisper, "model", None), "device", None)
                     suffix = " · NVIDIA GPU" if device == "cuda" else (" · CPU" if device == "cpu" else "")
+                    if self.whisper is not None:
+                        suffix += " · Whisper " + getattr(self.whisper, 'livetranslate_model_name', 'Small')
                     self.status.set("Перевод включён" + suffix)
             elif kind == "error":
                 self.failure = f"{SOURCES[index] if index is not None else 'Модели'}: {value}"
@@ -468,6 +470,15 @@ class App:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    from single_instance import SingleInstance, activate_existing, register_window
+    instance = SingleInstance()
+    try:
+        if instance.is_primary:
+            root = tk.Tk()
+            App(root)
+            register_window(root)
+            root.mainloop()
+        else:
+            activate_existing()
+    finally:
+        instance.close()

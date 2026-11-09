@@ -22,7 +22,7 @@ class SpeakerDiarizer:
         self.extractor = so.SpeakerEmbeddingExtractor(so.SpeakerEmbeddingExtractorConfig(model=embedding, num_threads=2))
         self.centres = []
 
-    def label(self, samples):
+    def label(self, samples, excluded=()):
         if len(samples) < RATE:
             return UNKNOWN
         stream = self.extractor.create_stream()
@@ -35,16 +35,17 @@ class SpeakerDiarizer:
         if not np.isfinite(norm) or norm == 0:
             return UNKNOWN
         vector /= norm
-        scores = [float(c @ vector) for c in self.centres]
+        scores = [(float(c @ vector), i) for i, c in enumerate(self.centres) if i not in excluded]
         if scores:
-            best = int(np.argmax(scores))
-            if scores[best] >= 0.6:
-                if len(scores) > 1 and scores[best] - sorted(scores)[-2] < 0.08:
+            scores.sort(reverse=True)
+            score, best = scores[0]
+            if score >= 0.6:
+                if len(scores) > 1 and score - scores[1][0] < 0.08:
                     return UNKNOWN
                 centre = self.centres[best] * 0.8 + vector * 0.2
                 self.centres[best] = centre / np.linalg.norm(centre)
                 return f'Голос {best + 1}'
-            if scores[best] > 0.4:
+            if score > 0.4:
                 return UNKNOWN
         self.centres.append(vector)
         return f'Голос {len(self.centres)}'
@@ -64,5 +65,12 @@ class SpeakerDiarizer:
                     if y > x:
                         mask[x-a:y-a] = False
             grouped.setdefault(row.speaker, []).append(samples[a:b][mask])
-        names = {key: self.label(np.concatenate(parts)) for key, parts in grouped.items()}
+        names = {}
+        assigned = set()
+        # Distinct speakers detected in the same window cannot share an identity.
+        for key, parts in sorted(grouped.items(), key=lambda item: -sum(map(len, item[1]))):
+            name = self.label(np.concatenate(parts), frozenset(assigned))
+            names[key] = name
+            if name != UNKNOWN:
+                assigned.add(int(name.split()[-1]) - 1)
         return [(row.start, row.end, names[row.speaker]) for row in rows]

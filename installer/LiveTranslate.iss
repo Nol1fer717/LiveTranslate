@@ -8,7 +8,7 @@
 [Setup]
 AppId={{C1AD0775-5F30-4C86-9D6B-708E44F090A2}
 AppName=LiveTranslate
-AppVersion=1.3.0
+AppVersion=1.4.0
 AppPublisher=LiveTranslate
 DefaultDirName={autopf}\LiveTranslate
 DefaultGroupName=LiveTranslate
@@ -32,9 +32,10 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"
 Name: "german"; Description: "Немецкий язык: перевод в обе стороны (загрузка около 450 МБ)"; Flags: unchecked
-Name: "speakers"; Description: "Различать голоса собеседников (загрузка около 14 МБ)"; Flags: unchecked
-Name: "nvidia"; Description: "Ускорение NVIDIA (загрузка около 1,3 ГБ; нужен интернет)"; Flags: unchecked
+Name: "speakers"; Description: "Различать голоса собеседников (загрузка около 50 МБ)"; Flags: unchecked
+Name: "nvidia"; Description: "Дополнительно установить ускорение NVIDIA (определяется автоматически)"; Flags: unchecked
 
 [Files]
 Source: "{#PayloadDir}\model_downloader.exe"; Flags: dontcopy
@@ -50,12 +51,20 @@ Source: "{tmp}\downloads\vosk-model-small-ru-0.22.zip"; DestDir: "{app}\data"; E
 Source: "{tmp}\downloads\translate-en_de-1_3.zip"; DestDir: "{app}\data"; ExternalSize: 164904507; Hash: "6cd847f0c06c9c66013e6b0932e07fd54a6d90894659c02bf6c5247b72fb25b1"; Tasks: german; Check: HasDownload('translate-en_de-1_3.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\translate-de_en-1_9.zip"; DestDir: "{app}\data"; ExternalSize: 317000000; Hash: "4de45bb5801c25cf7d776c075c8eb71fac0667d5c9164c0dd9a38b06eaa5f20e"; Tasks: german; Check: HasDownload('translate-de_en-1_9.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\vosk-model-spk-0.4.zip"; DestDir: "{app}\data"; ExternalSize: 15000000; Hash: "a74d8f51144484813e16af689bb0f916b7a111e2347f467c4933c1166097b5a7"; Tasks: speakers; Check: HasDownload('vosk-model-spk-0.4.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
-Source: "{tmp}\downloads\cublas.zip"; DestDir: "{app}\_internal"; ExternalSize: 1200000000; Hash: "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661"; Tasks: nvidia; Check: HasDownload('cublas.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
-Source: "{tmp}\downloads\cudnn.zip"; DestDir: "{app}\_internal"; ExternalSize: 1500000000; Hash: "3467aafa9b260e6adf5fbbfc0e21d180133305b42032aa1160be2d3142bb8b09"; Tasks: nvidia; Check: HasDownload('cudnn.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
-Source: "{tmp}\downloads\nvrtc.zip"; DestDir: "{app}\_internal"; ExternalSize: 160000000; Hash: "72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349"; Tasks: nvidia; Check: HasDownload('nvrtc.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
+Source: "{tmp}\downloads\speaker-segmentation.onnx"; DestDir: "{app}\data"; ExternalSize: 5992913; Hash: "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"; Tasks: speakers; Check: HasDownload('speaker-segmentation.onnx'); Flags: external ignoreversion
+Source: "{tmp}\downloads\wespeaker-resnet34.onnx"; DestDir: "{app}\data"; ExternalSize: 26534365; Hash: "5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94"; Tasks: speakers; Check: HasDownload('wespeaker-resnet34.onnx'); Flags: external ignoreversion
+Source: "{tmp}\downloads\cublas.zip"; DestDir: "{app}\_internal"; ExternalSize: 1200000000; Hash: "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661"; Check: HasDownload('cublas.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
+Source: "{tmp}\downloads\cudnn.zip"; DestDir: "{app}\_internal"; ExternalSize: 1500000000; Hash: "3467aafa9b260e6adf5fbbfc0e21d180133305b42032aa1160be2d3142bb8b09"; Check: HasDownload('cudnn.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
+Source: "{tmp}\downloads\nvrtc.zip"; DestDir: "{app}\_internal"; ExternalSize: 160000000; Hash: "72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349"; Check: HasDownload('nvrtc.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
+Source: "{tmp}\downloads\turbo-model.bin"; DestDir: "{app}\data\whisper-turbo"; DestName: "model.bin"; ExternalSize: 1617884929; Hash: "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da"; Check: HasDownload('turbo-model.bin'); Flags: external ignoreversion
+Source: "{tmp}\downloads\turbo-config.json"; DestDir: "{app}\data\whisper-turbo"; DestName: "config.json"; ExternalSize: 2263; Hash: "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e"; Check: HasDownload('turbo-config.json'); Flags: external ignoreversion
+Source: "{tmp}\downloads\turbo-tokenizer.json"; DestDir: "{app}\data\whisper-turbo"; DestName: "tokenizer.json"; ExternalSize: 2710337; Hash: "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd"; Check: HasDownload('turbo-tokenizer.json'); Flags: external ignoreversion
+Source: "{tmp}\downloads\turbo-vocabulary.json"; DestDir: "{app}\data\whisper-turbo"; DestName: "vocabulary.json"; ExternalSize: 1068114; Hash: "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1"; Check: HasDownload('turbo-vocabulary.json'); Flags: external ignoreversion
+Source: "{tmp}\downloads\turbo-preprocessor_config.json"; DestDir: "{app}\data\whisper-turbo"; DestName: "preprocessor_config.json"; ExternalSize: 340; Hash: "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"; Check: HasDownload('turbo-preprocessor_config.json'); Flags: external ignoreversion
 
 [Icons]
 Name: "{autoprograms}\LiveTranslate"; Filename: "{app}\LiveTranslate.exe"
+Name: "{autodesktop}\LiveTranslate"; Filename: "{app}\LiveTranslate.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\LiveTranslate.exe"; Description: "Запустить LiveTranslate"; Flags: nowait postinstall skipifsilent
@@ -75,7 +84,7 @@ begin
   if WizardIsTaskSelected('speakers') then Tasks := Tasks + 'speakers,';
   if WizardIsTaskSelected('nvidia') then Tasks := Tasks + 'nvidia,';
   ExtractTemporaryFile('model_downloader.exe');
-  Args := '--target "' + ExpandConstant('{app}') + '" --output "' + ExpandConstant('{tmp}\downloads') + '" --tasks "' + Tasks + '"';
+  Args := '--target "' + ExpandConstant('{app}') + '" --output "' + ExpandConstant('{tmp}\downloads') + '" --auto-gpu --tasks "' + Tasks + '"';
   if WizardSilent then Args := Args + ' --silent';
   if not Exec(ExpandConstant('{tmp}\model_downloader.exe'), Args, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
     Result := 'Не удалось запустить загрузку компонентов.'

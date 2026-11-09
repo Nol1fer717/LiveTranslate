@@ -6,10 +6,13 @@ import hashlib
 import json
 from pathlib import Path
 import queue
+import shutil
 import sys
+import tarfile
 import threading
 import time
 from urllib.request import Request, urlopen
+from gpu_detection import nvidia_memory, supports_turbo
 
 CONFIG = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent)) / 'packages.json'
 CHUNK = 1024 * 1024
@@ -41,6 +44,15 @@ def download(package, output, cancelled, notify):
         if cancelled.is_set():
             raise InterruptedError('Загрузка отменена')
         try:
+            if package.get('hf_file'):
+                from huggingface_hub import hf_hub_download
+                path = Path(hf_hub_download(repo_id=package['hf_repo'], filename=package['hf_file'],
+                                            revision=package['hf_revision'], local_dir=output / 'hf-turbo'))
+                if file_digest(path, cancelled) != package['sha256']:
+                    raise ValueError(f"Не совпала контрольная сумма: {package['name']}")
+                shutil.move(str(path), str(destination))
+                notify(destination.stat().st_size)
+                return
             digest = hashlib.sha256()
             agent = 'Mozilla/5.0' if package['name'] == 'translate-en_de-1_3.zip' else 'LiveTranslate-Installer/1.3'
             request = Request(package['url'], headers={'User-Agent': agent})
@@ -53,6 +65,22 @@ def download(package, output, cancelled, notify):
                     notify(len(data))
             if digest.hexdigest() != package['sha256']:
                 raise ValueError(f"Не совпала контрольная сумма: {package['name']}")
+            if package.get('archive_member'):
+                extracted = output / (package['name'] + '.extracted')
+                try:
+                    with tarfile.open(temporary, 'r:bz2') as archive:
+                        member = archive.getmember(package['archive_member'])
+                        if not member.isfile() or member.size > 20_000_000:
+                            raise ValueError('Некорректный файл модели в архиве')
+                        with archive.extractfile(member) as source, extracted.open('wb') as target:
+                            shutil.copyfileobj(source, target, CHUNK)
+                    if file_digest(extracted, cancelled) != package['files'][0]['sha256']:
+                        raise ValueError('Не совпала контрольная сумма модели')
+                    extracted.replace(destination)
+                    temporary.unlink(missing_ok=True)
+                    return
+                finally:
+                    extracted.unlink(missing_ok=True)
             temporary.replace(destination)
             return
         except (OSError, ValueError) as exc:
@@ -77,14 +105,24 @@ def prepare(target, output, tasks, cancelled, updates):
         return
     updates.put(('status', f'Параллельная загрузка компонентов: {len(needed)}'))
     with ThreadPoolExecutor(max_workers=min(4, len(needed))) as pool:
-        futures = [pool.submit(download, package, output, cancelled,
-                               lambda count: updates.put(('bytes', count))) for package in needed]
+        futures = {pool.submit(download, package, output, cancelled,
+                               lambda count: updates.put(('bytes', count))): package for package in needed}
+        optional_failed = False
         for future in as_completed(futures):
             try:
                 future.result()
             except Exception:
+                if futures[future]['task'] in ('nvidia', 'turbo') and not cancelled.is_set():
+                    optional_failed = True
+                    continue
                 cancelled.set()
                 raise
+    if optional_failed:
+        # Do not install a partial GPU/model set; the base Small CPU build works.
+        for package in needed:
+            if package['task'] in ('nvidia', 'turbo'):
+                (output / package['name']).unlink(missing_ok=True)
+        updates.put(('status', 'Не удалось загрузить ускорение. Установка продолжится с Whisper Small на CPU.'))
 
 
 def main():
@@ -93,8 +131,15 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--tasks', default='')
     parser.add_argument('--silent', action='store_true')
+    parser.add_argument('--auto-gpu', action='store_true')
     args = parser.parse_args()
     tasks = set(filter(None, args.tasks.split(',')))
+    if args.auto_gpu:
+        memory = nvidia_memory()
+        if memory:
+            tasks.add('nvidia')
+        if supports_turbo(memory, check_free=False):
+            tasks.add('turbo')
     cancelled, updates = threading.Event(), queue.SimpleQueue()
     if args.silent:
         try:
