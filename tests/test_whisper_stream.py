@@ -13,6 +13,12 @@ def segment(text, words):
 
 
 class StreamTests(unittest.TestCase):
+    def test_missing_german_model_reports_how_to_install_it(self):
+        self.stream.publish("Guten Tag.", "de", None)
+        self.assertEqual(self.lines[0][0], "Guten Tag.")
+        self.assertIn("установщик", self.lines[0][1])
+        self.assertEqual(self.lines[0][3], "DE → RU")
+
     def test_technical_names(self):
         self.assertEqual(normalize_terms("доступ по ССН к позгресса и инжинкса"),
                          "доступ по SSH к PostgreSQL и Nginx")

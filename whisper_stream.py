@@ -196,7 +196,9 @@ class WhisperStream:
         # Argos models translate a sentence at a time; a second sentence can be omitted
         # if it is appended to a long first sentence in the same translation request.
         for sentence in re.split(r'(?<=[.!?…])\s+(?=[A-ZА-ЯЁ«"])', normalize_terms(text)):
-            translated = translation.translate(sentence) if translation else "Перевод доступен для русского, английского и немецкого."
+            translated = (translation.translate(sentence) if translation else
+                          "Немецкий перевод не установлен. Запустите установщик снова и выберите немецкий язык."
+                          if language == "de" else "Перевод для этого языка не установлен.")
             self.line(sentence, translated, speaker, direction)
 
     def finish(self, final):
