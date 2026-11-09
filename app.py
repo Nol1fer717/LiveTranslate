@@ -184,6 +184,7 @@ class App:
         self.closing = False
         self.cache = {}
         self.speaker_model = None
+        self.speaker_diarizer = None
         self.whisper = None
         self.device_items = [[], []]
         self.scan()
@@ -333,8 +334,10 @@ class App:
             try:
                 path = folder / ("microphone.wav", "computer.wav")[index] if folder else None
                 speaker_model = self.speaker_model if index == 1 and detect else None
+                diarizer = self.speaker_diarizer if index == 1 and detect and lang == 'auto' else None
                 capture(audio, device, self.cache if lang == "auto" else self.cache[lang],
-                        index, stop, emit, path, speaker_model, self.whisper if lang == "auto" else None)
+                        index, stop, emit, path, speaker_model, self.whisper if lang == "auto" else None,
+                        diarizer=diarizer)
             except Exception as exc:
                 emit("error", index, str(exc))
                 stop.set()
@@ -342,6 +345,12 @@ class App:
         try:
             if detect and self.speaker_model is None:
                 self.speaker_model = SpkModel(str(SPEAKER_PATH))
+            if detect and any(index == 1 and lang == 'auto' for index, _, lang in selected):
+                if (DATA / 'wespeaker-resnet34.onnx').is_file() and (DATA / 'speaker-segmentation.onnx').is_file():
+                    from speaker_diarization import SpeakerDiarizer
+                    self.speaker_diarizer = SpeakerDiarizer(DATA)
+                else:
+                    self.speaker_diarizer = None
             for index, device, lang in selected:
                 if stop.is_set():
                     break

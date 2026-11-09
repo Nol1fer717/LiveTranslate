@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 import unittest
 import threading
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 from whisper_stream import RATE, WhisperStream, normalize_terms
@@ -70,6 +70,42 @@ class StreamTests(unittest.TestCase):
             self.stream.voiced = 20
             self.stream.flush()
             self.assertEqual(len(self.lines), expected)
+
+    def test_unknown_speakers_do_not_share_recognition_context(self):
+        self.stream.speaker_decoder = Mock()
+        self.stream.speaker_decoder.FinalResult.return_value = '{}'
+        self.stream.speakers = Mock()
+        self.stream.speakers.label.return_value = 'Голос не определён'
+        self.model.detect_language.return_value = ('en', 0.99, [])
+        self.model.transcribe.return_value = ([segment('Hello.', [(0, 1, 'Hello.')])], None)
+        for _ in range(2):
+            self.stream.frames.extend(bytes(RATE * 2))
+            self.stream.voiced = 20
+            self.stream.finish(final=True)
+        self.assertEqual(len(self.lines), 2)
+        self.assertIsNone(self.model.transcribe.call_args.kwargs['initial_prompt'])
+        self.assertNotIn('hotwords', self.model.transcribe.call_args.kwargs)
+
+    def test_tail_recognition_discards_words_from_padding(self):
+        self.model.detect_language.return_value = ('en', 0.99, [])
+        self.model.transcribe.side_effect = [
+            ([segment('Hello', [(0, 1, 'Hello')])], None),
+            ([segment(' world hallucination', [(0.2, 0.5, ' world'), (1.1, 1.4, ' hallucination')])], None),
+        ]
+        self.stream.frames.extend(bytes(2 * RATE * 2))
+        self.stream.voiced = 20
+        with patch('whisper_stream.get_speech_timestamps', return_value=[{'start': 0, 'end': RATE}]):
+            self.stream.finish(final=True)
+        self.assertEqual(self.lines[0][0], 'Hello world')
+
+    def test_speaker_turns_split_words_and_keep_overlap_unknown(self):
+        self.stream.diarizer = Mock()
+        self.stream.diarizer.turns.return_value = [(0, 1, 'Голос 1'), (1, 2, 'Голос 2'), (1.5, 2, 'Голос 1')]
+        self.model.detect_language.return_value = ('en', 0.99, [])
+        self.model.transcribe.return_value = ([segment('Hello there both', [(0.1, 0.6, 'Hello'), (1.05, 1.3, ' there'), (1.6, 1.9, ' both')])], None)
+        self.stream.frames.extend(bytes(2 * RATE * 2)); self.stream.voiced = 20
+        self.stream.finish(final=True)
+        self.assertEqual([(x[0], x[2]) for x in self.lines], [('Hello', 'Голос 1'), ('there', 'Голос 2'), ('both', 'Голос не определён')])
 
     def test_late_preview_cannot_reappear_after_finalization(self):
         started, release = threading.Event(), threading.Event()

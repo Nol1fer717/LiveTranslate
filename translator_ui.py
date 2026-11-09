@@ -23,6 +23,9 @@ class TranslatorUI:
         self.input.bind('<<Modified>>', self.modified)
         self.input.bind('<Button-3>', self.context_menu)
         self.output.bind('<Button-3>', self.context_menu)
+        # Tk's default Ctrl bindings depend on the active keyboard layout on Windows.
+        for widget in (self.input, self.output):
+            widget.bind('<Control-KeyPress>', self.clipboard_shortcut)
         self.status = tk.StringVar(value='Введите текст — перевод появится автоматически')
         tk.Label(self.page, textvariable=self.status, bg=BG, fg=MUTED, anchor='w').grid(row=4, column=0, columnspan=2, sticky='ew', pady=(10, 0))
         self.requests = queue.Queue(maxsize=1); self.results = queue.SimpleQueue()
@@ -65,7 +68,24 @@ class TranslatorUI:
 
     def clipboard_action(self, widget, action):
         widget.focus_set()
+        if action == '<<Copy>>':
+            if widget.tag_ranges('sel'):
+                text = widget.get('sel.first', 'sel.last')
+                widget.clipboard_clear()
+                widget.clipboard_append(text)
+            return
         widget.event_generate(action)
+
+    def clipboard_shortcut(self, event):
+        # Windows reports virtual key codes for the physical C, V, X and Z keys,
+        # including when the Russian or German keyboard layout is active.
+        if event.state & 0x0008:  # Do not intercept AltGr / Ctrl+Alt.
+            return None
+        action = {67: '<<Copy>>', 86: '<<Paste>>', 88: '<<Cut>>', 90: '<<Undo>>'}.get(event.keycode)
+        if action is None or (event.widget is self.output and action != '<<Copy>>'):
+            return None
+        self.clipboard_action(event.widget, action)
+        return 'break'
 
     def modified(self, event=None):
         if self.input.edit_modified():

@@ -138,7 +138,7 @@ class SessionSpeakers:
         return f"Голос {len(self.centres)}"
 
 
-def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None):
+def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None, diarizer=None):
     """Capture continuously while speech recognition and translation consume queued blocks."""
     chunks = queue.Queue(maxsize=200)
     analysis = queue.Queue(maxsize=6000)  # Up to ten minutes of compact mono PCM if inference falls behind.
@@ -157,7 +157,7 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         automatic = WhisperStream(whisper, language, speaker_model, speakers,
                                   lambda *line: emit("line", target, line),
                                   lambda text: emit("partial", target, text),
-                                  lambda result: emit("preview", target, result))
+                                  lambda result: emit("preview", target, result), diarizer=diarizer)
     resampler = None
     partial = ""
     last_partial_translation = 0.0

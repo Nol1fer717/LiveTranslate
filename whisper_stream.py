@@ -6,6 +6,7 @@ import queue
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import ctranslate2
 import numpy as np
@@ -18,7 +19,6 @@ RATE = 16000
 FRAME = 512  # Silero's 32 ms analysis window
 END_OF_SENTENCE = re.compile(r"""[.!?…]["'»”)]*$""")
 REPEATED_NUMBER = re.compile(r"(?<!\d)(\d+)(?:[\s.,;:\-–—]+\1(?!\d)){6,}")
-TECHNICAL_TERMS = "SSH, PostgreSQL, Postgres, Nginx, Linux, Docker, Kubernetes, GitHub, SQL, API."
 TERM_PATTERNS = [
     (re.compile(r"(?<!\w)(?:ссш|ссн|эс[ -]?эс[ -]?(?:эйч|аш)|ssh)(?!\w)", re.I), "SSH"),
     (re.compile(r"(?<!\w)(?:постгрес(?:с(?:а|у|ом|е)?)?|позгрес(?:с(?:а|у|ом|е)?)?|postgress|postgresql)(?!\w)", re.I), "PostgreSQL"),
@@ -81,14 +81,15 @@ class SpeechGate:
 
 class WhisperStream:
     """Buffer speech until a pause; retain undecided words across long windows."""
-    def __init__(self, model, languages, speaker_model, speakers, line, partial, preview=None):
+    def __init__(self, model, languages, speaker_model, speakers, line, partial, preview=None, diarizer=None):
         self.model = model
         self.languages = languages
         self.speakers = speakers
+        self.diarizer = diarizer
         self.line = line
         self.partial = partial
         self.speaker_decoder = None
-        if speaker_model is not None:
+        if speaker_model is not None and diarizer is None:
             self.speaker_decoder = KaldiRecognizer(languages["en"].speech, RATE, speaker_model)
         self.gate = SpeechGate()
         self.pending = bytearray()
@@ -118,7 +119,7 @@ class WhisperStream:
             try:
                 audio = np.frombuffer(pcm, "<i2").astype(np.float32) / 32768
                 segments, info = self.model.transcribe(audio, language=None, beam_size=1, temperature=0,
-                                                       condition_on_previous_text=False, hotwords=TECHNICAL_TERMS)
+                                                       condition_on_previous_text=False)
                 text = " ".join(s.text.strip() for s in segments if reliable(s)).strip()
                 if not text or info.language_probability < 0.42 or info.language not in self.languages:
                     continue
@@ -220,14 +221,17 @@ class WhisperStream:
             self.speaker_decoder.AcceptWaveform(pcm)
             who = self.speakers.label(json.loads(self.speaker_decoder.FinalResult()))
             self.speaker_decoder.Reset()
-        same_turn = fresh and language == self.previous_language and who == self.previous_speaker
+        # An unknown speaker is not an identity: two consecutive unknown voices
+        # must not share a prompt or be combined into one person's sentence.
+        identified = self.speaker_decoder is None or (who is not None and who != "Голос не определён")
+        same_turn = self.diarizer is None and fresh and identified and language == self.previous_language and who == self.previous_speaker
         words = []
         if confidence >= (0.42 if language in self.languages else 0.75):
             segments, _ = self.model.transcribe(
                 np.pad(samples, (0, 12800)) if final else samples,
                 language=language, beam_size=3, temperature=0, word_timestamps=True,
                 condition_on_previous_text=True, initial_prompt=self.previous_text if same_turn else None,
-                repetition_penalty=1.08, no_repeat_ngram_size=5, hotwords=TECHNICAL_TERMS)
+                repetition_penalty=1.08, no_repeat_ngram_size=5)
             for seg in segments:
                 if reliable(seg):
                     words.extend(seg.words or [])
@@ -243,15 +247,60 @@ class WhisperStream:
             del self.frames[:int(min(boundary, 22) * RATE) * 2]
             words = words[:cut + 1] if cut is not None else []
         self.voiced = 0 if final else min(6, len(self.frames) // (FRAME * 2))
+        if self.diarizer is not None and words:
+            if final:
+                tail_start = round(words[-1].end * RATE)
+                tail = samples[tail_start:]
+                if len(tail) >= RATE * 0.6 and get_speech_timestamps(tail, threshold=0.6, min_speech_duration_ms=160):
+                    rest, _ = self.model.transcribe(np.pad(tail, (0, 12800)), language=language, beam_size=3,
+                                                    temperature=0, word_timestamps=True,
+                                                    condition_on_previous_text=False, no_repeat_ngram_size=5)
+                    for seg in rest:
+                        if reliable(seg):
+                            for word in seg.words or []:
+                                if word.start < len(tail) / RATE:
+                                    words.append(SimpleNamespace(word=word.word, start=word.start + tail_start / RATE,
+                                                                 end=word.end + tail_start / RATE))
+            turns = self.diarizer.turns(samples)
+            groups = []
+            for word in words:
+                midpoint = (word.start + word.end) / 2
+                matches = {name for start, end, name in turns if start <= midpoint <= end}
+                if not matches:
+                    # Small segmentation gaps should not split a sentence into
+                    # one-word translations. Overlapping speakers stay unknown.
+                    nearby = [(min(abs(midpoint - start), abs(midpoint - end)), name)
+                              for start, end, name in turns]
+                    if nearby:
+                        distance, name = min(nearby)
+                        if distance <= 0.4:
+                            matches = {name}
+                label = next(iter(matches)) if len(matches) == 1 else 'Голос не определён'
+                if not groups or groups[-1][0] != label:
+                    groups.append((label, []))
+                groups[-1][1].append(word.word)
+            self.flush_text()
+            for label, parts in groups:
+                text = ''.join(parts).strip()
+                if text:
+                    self.publish(text, language, label)
+            self.previous_text = ''
+            self.previous_language = self.previous_speaker = None
+            self.last_voice = self.clock
+            self.partial('')
+            self.clear_preview()
+            return
         text = "".join(w.word for w in words).strip()
         if final and words:
             # Whisper can emit an end token before the last spoken words of a clip.
             tail = samples[round(words[-1].end * RATE):]
             if len(tail) >= RATE * 0.6 and get_speech_timestamps(tail, threshold=0.6, min_speech_duration_ms=160):
                 rest, _ = self.model.transcribe(np.pad(tail, (0, 12800)), language=language, beam_size=3,
-                                                temperature=0, condition_on_previous_text=False,
+                                                temperature=0, word_timestamps=True, condition_on_previous_text=False,
                                                 no_repeat_ngram_size=5)
-                suffix = " ".join(seg.text.strip() for seg in rest if reliable(seg))
+                # Padding helps Whisper decode the end, but is not actual speech.
+                suffix = "".join(word.word for seg in rest if reliable(seg)
+                                 for word in (seg.words or []) if word.start < len(tail) / RATE).strip()
                 text = (text + " " + suffix).strip()
         if not text:
             if final:
