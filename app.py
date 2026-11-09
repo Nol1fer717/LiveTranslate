@@ -11,6 +11,8 @@ from vosk import SpkModel
 
 from engine import DATA, GermanTranslation, Language, SPEAKER_PATH, capture, devices
 from whisper_stream import load_whisper
+from storage import Storage
+from library_ui import LibraryUI
 
 SOURCES = ("Микрофон", "Звук компьютера")
 DIRECTIONS = ("Автоопределение", "Русский → Английский", "Английский → Русский")
@@ -38,8 +40,13 @@ class App:
         style.configure("Vertical.TScrollbar", background=FIELD, troughcolor=CARD, bordercolor=CARD,
                         arrowcolor=MUTED)
 
-        page = tk.Frame(root, bg=BG, padx=28, pady=24)
-        page.grid(sticky="nsew")
+        style.configure("Dark.TNotebook", background=BG, borderwidth=0)
+        style.configure("Dark.TNotebook.Tab", background=FIELD, foreground=TEXT, padding=(18, 8))
+        style.map("Dark.TNotebook.Tab", background=[("selected", "#315887")], foreground=[("selected", "white")])
+        tabs = ttk.Notebook(root, style="Dark.TNotebook")
+        tabs.grid(sticky="nsew")
+        page = tk.Frame(tabs, bg=BG, padx=28, pady=24)
+        tabs.add(page, text="Перевод")
         page.columnconfigure(0, weight=1)
         page.rowconfigure(4, weight=1)
 
@@ -136,6 +143,11 @@ class App:
         self.history.tag_configure("target", foreground=TEXT, font=("Segoe UI", 13), spacing3=12)
         self.history.tag_configure("placeholder", foreground=MUTED, font=("Segoe UI", 11))
 
+        self.storage = Storage()
+        self.library = LibraryUI(tabs, self.storage)
+        tabs.bind("<<NotebookTabChanged>>", lambda event: self.library.refresh_history() if tabs.select() == str(self.library.history_page) else None)
+        self.session_id = None
+        self.library.active_session = lambda: self.session_id
         self.events = queue.SimpleQueue()
         self.entries = []
         self.previews = {}
@@ -188,6 +200,9 @@ class App:
             self.status.set(f"Не удалось получить устройства: {exc}")
 
     def render(self):
+        selected = self.history.tag_ranges("sel")
+        selected_text = self.history.get("sel.first", "sel.last") if selected else None
+        scroll = self.history.yview()[0] if selected else None
         self.history.configure(state="normal")
         self.history.delete("1.0", "end")
         if not self.entries and not any(self.previews.values()) and not any(self.partials.values()):
@@ -222,7 +237,13 @@ class App:
                 if partial and not self.previews.get(index):
                     self.history.insert("end", f"{SOURCES[index]} · Распознавание\n", "meta")
                     self.history.insert("end", partial + "\n", "source")
-        self.history.see("end")
+        if selected_text:
+            match = self.history.search(selected_text, "1.0", stopindex="end", exact=True)
+            if match:
+                self.history.tag_add("sel", match, f"{match}+{len(selected_text)}c")
+                self.history.yview_moveto(scroll)
+        else:
+            self.history.see("end")
         self.history.configure(state="disabled")
 
     def render_preview(self):
@@ -251,6 +272,11 @@ class App:
             except OSError as exc:
                 messagebox.showerror("Запись", str(exc))
                 return
+        try:
+            self.session_id = self.storage.start_session(self.mode.get())
+        except Exception as exc:
+            messagebox.showerror("История", f"Не удалось начать сохранение сеанса: {exc}")
+            return
         if self.entries:
             self.entries.append({"session": "Новый сеанс · " + datetime.now().strftime("%H:%M")})
             self.render()
@@ -335,9 +361,16 @@ class App:
                     source_lang, target_lang = (part.strip() for part in direction.split("→", 1))
                 else:
                     source_lang, target_lang = (("RU", "EN") if self.direction.current() == 1 else ("EN", "RU"))
-                self.entries.append({"time": datetime.now().strftime("%H:%M:%S"), "index": index,
-                                     "speaker": speaker, "from": source_lang, "to": target_lang,
-                                     "source": source, "target": target})
+                entry = {"time": datetime.now().strftime("%H:%M:%S"), "index": index,
+                         "speaker": speaker, "from": source_lang, "to": target_lang,
+                         "source": source, "target": target}
+                self.entries.append(entry)
+                if self.session_id is not None:
+                    try:
+                        self.storage.add_phrase(self.session_id, entry)
+                    except Exception as exc:
+                        self.failure = f"Не удалось сохранить фразу в историю: {exc}"
+                        self.stop.set()
                 self.render()
             elif kind == "ready":
                 self.ready += 1
@@ -349,9 +382,17 @@ class App:
                 self.failure = f"{SOURCES[index] if index is not None else 'Модели'}: {value}"
             elif kind == "done":
                 self.stop = None
+                if self.session_id is not None:
+                    try:
+                        self.storage.end_session(self.session_id)
+                    except Exception as exc:
+                        self.failure = f"Не удалось завершить сохранение истории: {exc}"
+                    self.session_id = None
                 if self.closing:
-                    self.root.destroy()
-                    return
+                    if self.failure:
+                        messagebox.showerror("Сохранение", self.failure)
+                    if self.finish_close():
+                        return
                 self.previews.clear()
                 self.partials.clear()
                 self.render_preview()
@@ -365,9 +406,17 @@ class App:
                 self.status.set(self.failure or (f"Записи: {self.folder}" if self.folder else "Перевод остановлен"))
         self.root.after(75, self.poll)
 
+    def finish_close(self):
+        if not self.library.save_current():
+            self.closing = False
+            return False
+        self.storage.close()
+        self.root.destroy()
+        return True
+
     def close(self):
         if self.stop is None:
-            self.root.destroy()
+            self.finish_close()
         else:
             self.closing = True
             self.stop.set()
