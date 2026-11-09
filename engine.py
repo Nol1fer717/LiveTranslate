@@ -43,11 +43,11 @@ def devices():
 
 
 class Language:
-    def __init__(self, src):
+    def __init__(self, src, load_speech=True):
         self.source = src
         dst = "ru" if src == "en" else "en"
         folder = DATA / f"translate-{src}_{dst}-1_9"
-        self.speech = Model(str(DATA / MODELS[src])) if src in MODELS else None
+        self.speech = Model(str(DATA / MODELS[src])) if load_speech and src in MODELS else None
         self.tokens = sentencepiece.SentencePieceProcessor(model_proto=(folder / "sentencepiece.model").read_bytes())
         self.translator = ctranslate2.Translator(str(folder / "model"), device="cpu",
                                                   compute_type="auto", intra_threads=2)

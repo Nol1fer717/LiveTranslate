@@ -13,6 +13,7 @@ from engine import DATA, GermanTranslation, Language, SPEAKER_PATH, capture, dev
 from whisper_stream import load_whisper
 from storage import Storage
 from library_ui import LibraryUI
+from translator_ui import TranslatorUI
 from user_data import data_directory
 from rounded_button import RoundedButton
 from theme import BG, CARD, FIELD, TEXT, MUTED, ACCENT, ACCENT_DARK, ACCENT_SOFT, BORDER, HOVER, SELECTION
@@ -153,9 +154,10 @@ class App:
         self.storage = Storage()
         if self.storage.legacy_conflict:
             messagebox.showwarning("История и заметки", "В «Документах» уже есть своя база. Она сохранена без изменений; старая база в AppData тоже сохранена, но автоматически с ней не объединена.", parent=root)
+        self.translator = TranslatorUI(tabs)
         self.library = LibraryUI(tabs, self.storage)
         nav_buttons = []
-        for label, target in (("Перевод", page), ("История", self.library.history_page), ("Заметки", self.library.notes_page)):
+        for label, target in (("Перевод", page), ("Переводчик", self.translator.page), ("История", self.library.history_page), ("Заметки", self.library.notes_page)):
             control = RoundedButton(navigation, text=label, command=lambda selected=target: tabs.select(selected),
                                 relief="flat", padx=18, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"),
                                 activebackground=HOVER, activeforeground=ACCENT)
@@ -438,6 +440,7 @@ class App:
         if not self.library.save_current():
             self.closing = False
             return False
+        self.translator.close()
         self.storage.close()
         if self.poll_job is not None:
             self.root.after_cancel(self.poll_job)
