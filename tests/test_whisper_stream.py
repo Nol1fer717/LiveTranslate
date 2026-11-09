@@ -4,7 +4,7 @@ import threading
 from unittest.mock import Mock, patch
 
 import numpy as np
-from whisper_stream import RATE, WhisperStream, normalize_terms, remove_phantom_outro
+from whisper_stream import RATE, WhisperStream, StableWords, normalize_terms, remove_phantom_outro
 
 
 def segment(text, words):
@@ -13,6 +13,51 @@ def segment(text, words):
 
 
 class StreamTests(unittest.TestCase):
+    def test_stable_words_are_never_replaced(self):
+        s=StableWords()
+        self.assertEqual(s.update('Hello wor'), '')
+        self.assertEqual(s.update('Hello world'), 'Hello')
+        self.assertEqual(s.update('Hello world again'), 'Hello world')
+        self.assertEqual(s.update('Yellow world again'), 'Hello world')
+        self.assertEqual(s.update('Hello world again'), 'Hello world')
+        self.assertEqual(s.update('Hello world again'), 'Hello world again')
+
+    def test_final_output_preserves_already_shown_words(self):
+        self.stream.preview = lambda value: None
+        self.stream.stable_words.update('hello there')
+        self.stream.stable_words.update('hello there')
+        self.model.detect_language.return_value = ('en', .99, [])
+        self.model.transcribe.return_value = ([segment('yellow there friend', [(0,.3,'yellow'),(.3,.6,' there'),(.6,1,' friend')])], None)
+        self.stream.frames.extend(bytes(RATE*2)); self.stream.voiced=20
+        self.stream.finish(final=True)
+        self.assertEqual(self.lines[0][0], 'hello there friend')
+
+    def test_segmentation_scale_controls_pause(self):
+        def interval(level):
+            s=WhisperStream(self.model, {'en':self.translation}, None, None, lambda *a:None, lambda *a:None, split_level=level)
+            return s.quiet_frames
+        self.assertLess(interval(1), interval(5))
+        self.assertLess(interval(5), interval(10))
+        with self.assertRaises(ValueError): interval(0)
+
+    def test_preview_shows_original_without_translation(self):
+        received=threading.Event(); values=[]
+        self.model.transcribe.return_value=([segment('Hello there.', [(0,1,'Hello there.')])], SimpleNamespace(language='en',language_probability=.99))
+        def preview(value):
+            if value: values.append(value); received.set()
+        stream=WhisperStream(self.model, {'en':self.translation}, None, None, lambda *a:None, lambda *a:None, preview)
+        try:
+            stream.frames.extend(bytes(2*RATE*2));stream.clock=2*RATE;stream.queue_preview()
+            deadline=threading.Event()
+            for _ in range(15):
+                if stream.stable_words.previous: break
+                deadline.wait(.02)
+            stream.clock+=RATE;stream.queue_preview()
+            self.assertTrue(received.wait(3));self.assertEqual(values[-1],('Hello there','','EN'))
+            self.translation.translate.assert_not_called()
+        finally:
+            stream.close()
+
     def test_suppresses_phantom_outro_without_removing_normal_sentences(self):
         self.assertEqual(remove_phantom_outro('Продолжение следует...'), '')
         self.assertEqual(remove_phantom_outro('Привет. Продолжение следует.'), 'Привет.')
@@ -20,6 +65,12 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(remove_phantom_outro('Вот что это за продолжение следует?'), 'Вот что это за продолжение следует?')
         self.stream.publish('Продолжение следует.', 'en', None)
         self.assertFalse(self.lines)
+
+    def test_suppresses_standalone_subtitle_credit(self):
+        self.assertEqual(remove_phantom_outro('Субтитры сделал DimaTorZok'), '')
+        self.assertEqual(remove_phantom_outro('Subtitles made by DimaTorZok.'), '')
+        self.assertEqual(remove_phantom_outro('Привет. Субтитры сделал DimaTorZok.'), 'Привет.')
+        self.assertEqual(remove_phantom_outro('Я знаю кто сделал субтитры.'), 'Я знаю кто сделал субтитры.')
 
     def test_missing_german_model_reports_how_to_install_it(self):
         self.stream.publish("Guten Tag.", "de", None)

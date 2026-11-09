@@ -8,7 +8,7 @@
 [Setup]
 AppId={{C1AD0775-5F30-4C86-9D6B-708E44F090A2}
 AppName=LiveTranslate
-AppVersion=1.4.1
+AppVersion=1.4.2
 AppPublisher=LiveTranslate
 DefaultDirName={autopf}\LiveTranslate
 DefaultGroupName=LiveTranslate

@@ -17,6 +17,7 @@ from library_ui import LibraryUI
 from translator_ui import TranslatorUI
 from user_data import data_directory
 from rounded_button import RoundedButton
+from settings import read_split_level, save_split_level
 from theme import BG, CARD, FIELD, TEXT, MUTED, ACCENT, ACCENT_DARK, ACCENT_SOFT, BORDER, HOVER, SELECTION
 
 SOURCES = ("Микрофон", "Звук компьютера")
@@ -164,8 +165,24 @@ class App:
             messagebox.showwarning("История и заметки", "В «Документах» уже есть своя база. Она сохранена без изменений; старая база в AppData тоже сохранена, но автоматически с ней не объединена.", parent=root)
         self.translator = TranslatorUI(tabs)
         self.library = LibraryUI(tabs, self.storage)
+        self.settings_path = data_directory() / 'settings.json'
+        self.split_level = tk.IntVar(value=read_split_level(self.settings_path))
+        self.settings_page = tk.Frame(tabs, bg=BG, padx=28, pady=20)
+        tabs.add(self.settings_page, text='Настройки')
+        tk.Label(self.settings_page, text='Настройки', bg=BG, fg=TEXT, font=('Segoe UI', 19, 'bold')).pack(anchor='w')
+        card = tk.Frame(self.settings_page, bg=CARD, padx=20, pady=18, highlightthickness=1, highlightbackground=BORDER)
+        card.pack(fill='x', pady=(18, 0))
+        tk.Label(card, text='Скорость разбиения высказываний', bg=CARD, fg=TEXT, font=('Segoe UI', 12, 'bold')).pack(anchor='w')
+        tk.Label(card, text='1 — чаще, 10 — реже. Изменение применяется при следующем запуске перевода.', bg=CARD, fg=MUTED, wraplength=750, justify='left').pack(anchor='w', pady=(6, 8))
+        scale = tk.Scale(card, from_=1, to=10, orient='horizontal', resolution=1, variable=self.split_level,
+                         bg=CARD, fg=TEXT, activebackground=ACCENT, highlightthickness=0, troughcolor=ACCENT_SOFT,
+                         length=430, showvalue=True)
+        scale.pack(anchor='w', fill='x')
+        scale.bind('<ButtonRelease-1>', self.save_settings)
+        scale.bind('<KeyRelease>', self.save_settings)
+        tk.Label(card, text='Речь отображается предварительно, перевод появляется после завершения фрагмента.', bg=CARD, fg=MUTED, wraplength=750, justify='left').pack(anchor='w', pady=(10, 0))
         nav_buttons = []
-        for label, target in (("Перевод", page), ("Переводчик", self.translator.page), ("История", self.library.history_page), ("Заметки", self.library.notes_page)):
+        for label, target in (("Перевод", page), ("Переводчик", self.translator.page), ("История", self.library.history_page), ("Заметки", self.library.notes_page), ("Настройки", self.settings_page)):
             control = RoundedButton(navigation, text=label, command=lambda selected=target: tabs.select(selected),
                                 relief="flat", padx=18, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"),
                                 activebackground=HOVER, activeforeground=ACCENT)
@@ -213,6 +230,12 @@ class App:
             button.configure(bg=ACCENT_SOFT if selected else CARD, fg=ACCENT if selected else TEXT,
                              activebackground=HOVER, activeforeground=TEXT)
         self.update_devices()
+
+    def save_settings(self, event=None):
+        try:
+            save_split_level(self.settings_path, self.split_level.get())
+        except (OSError, ValueError, tk.TclError) as exc:
+            messagebox.showerror('Настройки', f'Не удалось сохранить настройки: {exc}', parent=self.root)
 
     def update_devices(self):
         active = (self.mode.get() != MODES[1], self.mode.get() != MODES[0])
@@ -267,11 +290,11 @@ class App:
             source, target, *language = value
             source_lang = language[0] if language else "…"
             target_lang = "EN" if source_lang == "RU" else "RU"
-            self.history.insert("end", f"{SOURCES[index]} · Перевод обновляется\n", "meta")
+            self.history.insert("end", f"{SOURCES[index]} · Распознавание\n", "meta")
             if self.view.get() != VIEWS[2]:
                 self.history.insert("end", f"[{source_lang}]  ", "source_label")
                 self.history.insert("end", source + "\n", "source")
-            if self.view.get() != VIEWS[1]:
+            if self.view.get() != VIEWS[1] and target:
                 self.history.insert("end", f"[{target_lang}]  ", "target_label")
                 self.history.insert("end", target + "\n", "target")
         if self.view.get() != VIEWS[2]:
@@ -339,6 +362,7 @@ class App:
         self.start.configure(text="Остановить")
         self.status.set("Подготавливаем модели и устройства…")
         detect = self.identify.get() and any(index == 1 for index, _, _ in selected)
+        self.current_split_level = self.split_level.get()
         threading.Thread(target=self.session, args=(selected, folder, self.stop, detect), daemon=True).start()
 
     def session(self, selected, folder, stop, detect):
@@ -352,7 +376,7 @@ class App:
                 diarizer = self.speaker_diarizer if index == 1 and detect and lang == 'auto' else None
                 capture(audio, device, self.cache if lang == "auto" else self.cache[lang],
                         index, stop, emit, path, speaker_model, self.whisper if lang == "auto" else None,
-                        diarizer=diarizer)
+                        diarizer=diarizer, split_level=self.current_split_level)
             except Exception as exc:
                 emit("error", index, str(exc))
                 stop.set()

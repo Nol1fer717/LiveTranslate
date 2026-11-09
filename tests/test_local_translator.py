@@ -6,6 +6,20 @@ from app import App
 from translator_ui import prepare_translation_text, detect_text_language
 
 class LocalTranslatorTests(unittest.TestCase):
+ def test_spoken_russian_preparation_preserves_context_and_profanity(self):
+  from engine import prepare_spoken_russian
+  self.assertEqual(prepare_spoken_russian('Походу это хуёво работает'), 'похоже это пиздец как плохо работает')
+  self.assertEqual(prepare_spoken_russian('работает хуево'), 'работает пиздец как плохо')
+  self.assertEqual(prepare_spoken_russian('идём по походу реки'), 'идём по походу реки')
+  self.assertEqual(prepare_spoken_russian('это охуенно работает'), 'это охуенно работает')
+
+ def test_local_model_translates_poor_performance_as_negative(self):
+  from engine import DATA, Language
+  if not (DATA / 'translate-ru_en-1_9').is_dir(): self.skipTest('Russian model is not installed')
+  result = Language('ru', load_speech=False).translate('Он хуёво работает.').lower()
+  self.assertTrue('bad' in result or "doesn't work" in result or 'poor' in result, result)
+  self.assertIn('fuck', result)
+
  def test_detects_russian_english_and_german_and_rejects_ambiguous_scripts(self):
   from langid.langid import LanguageIdentifier, model
   identifier=LanguageIdentifier.from_modelstring(model, norm_probs=True); identifier.set_languages(['en','de'])

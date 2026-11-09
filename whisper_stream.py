@@ -21,6 +21,7 @@ FRAME = 512  # Silero's 32 ms analysis window
 END_OF_SENTENCE = re.compile(r"""[.!?…]["'»”)]*$""")
 REPEATED_NUMBER = re.compile(r"(?<!\d)(\d+)(?:[\s.,;:\-–—]+\1(?!\d)){6,}")
 PHANTOM_OUTRO = re.compile(r'(?i)(?:^|(?<=[.!?…])\s+)(?:продолжение следует|to be continued)\s*[.!?…]*\s*$')
+SUBTITLE_CREDIT = re.compile(r'(?i)(?:^|(?<=[.!?…])\s+)(?:субтитры\s+(?:сделал[аи]?|подготовил[аи]?|перевёл|перевел[аи]?|создал[аи]?)\s+\S+(?:\s+\S+)?|subtitles\s+(?:made\s+by|by)\s+\S+(?:\s+\S+)?)\s*[.!?…]*\s*$')
 TERM_PATTERNS = [
     (re.compile(r"(?<!\w)(?:ссш|ссн|эс[ -]?эс[ -]?(?:эйч|аш)|ssh)(?!\w)", re.I), "SSH"),
     (re.compile(r"(?<!\w)(?:постгрес(?:с(?:а|у|ом|е)?)?|позгрес(?:с(?:а|у|ом|е)?)?|postgress|postgresql)(?!\w)", re.I), "PostgreSQL"),
@@ -39,7 +40,7 @@ def normalize_terms(text):
 
 def remove_phantom_outro(text):
     """Suppress Whisper's recurring standalone end-card hallucination."""
-    return PHANTOM_OUTRO.sub('', text).strip()
+    return PHANTOM_OUTRO.sub('', SUBTITLE_CREDIT.sub('', text)).strip()
 
 
 def merge_uncertain_turns(groups):
@@ -120,13 +121,44 @@ class SpeechGate:
         return float(probability.item()) if np.max(np.abs(samples)) > 0.0003 else 0.0
 
 
+class StableWords:
+    """Commit only words that agree in successive hypotheses."""
+    def __init__(self):
+        self.previous = []
+        self.committed = []
+
+    @staticmethod
+    def key(word):
+        return word.strip('.,!?…:;"\'«»()').casefold()
+
+    def update(self, text):
+        words = [w.strip('.,!?…:;"\'«»()') for w in text.split()]
+        words = [w for w in words if w]
+        keys = [self.key(w) for w in words]
+        old = [self.key(w) for w in self.previous]
+        committed = [self.key(w) for w in self.committed]
+        if keys[:len(committed)] == committed:
+            count = 0
+            for a, b in zip(keys, old):
+                if a != b: break
+                count += 1
+            if count > len(self.committed):
+                self.committed.extend(words[len(self.committed):count])
+        self.previous = words
+        return ' '.join(self.committed)
+
+
 class WhisperStream:
     """Buffer speech until a pause; retain undecided words across long windows."""
-    def __init__(self, model, languages, speaker_model, speakers, line, partial, preview=None, diarizer=None):
+    def __init__(self, model, languages, speaker_model, speakers, line, partial, preview=None, diarizer=None, split_level=5):
         self.model = model
         self.languages = languages
         self.speakers = speakers
         self.diarizer = diarizer
+        if not isinstance(split_level, int) or isinstance(split_level, bool) or not 1 <= split_level <= 10:
+            raise ValueError('split_level must be between 1 and 10')
+        # 1 = frequent boundaries; 10 = wait longer for a meaningful block.
+        self.quiet_frames = round((0.48 + (split_level - 1) * 0.14) * RATE / FRAME)
         self.line = line
         self.partial = partial
         self.speaker_decoder = None
@@ -144,6 +176,8 @@ class WhisperStream:
         self.preview = preview
         self.preview_lock = threading.Lock()
         self.preview_generation = 0
+        self.stable_words = StableWords()
+        self.stable_language = None
         self.preview_at = 0
         self.preview_queue = queue.Queue(maxsize=1)
         self.preview_thread = None
@@ -164,14 +198,19 @@ class WhisperStream:
                 text = " ".join(s.text.strip() for s in segments if reliable(s)).strip()
                 if not text or info.language_probability < 0.42 or info.language not in self.languages:
                     continue
-                text = remove_phantom_outro(normalize_terms((prefix + " " + text).strip()))
+                text = remove_phantom_outro(normalize_terms(text))
                 if not text:
                     continue
-                translated = ' '.join(self.languages[info.language].translate(sentence)
-                                      for sentence in SENTENCE_BOUNDARY.split(text) if sentence.strip())
                 with self.preview_lock:
                     if generation == self.preview_generation:
-                        self.preview((text, translated, info.language.upper()))
+                        if self.stable_language is not None and info.language != self.stable_language:
+                            continue
+                        stable = self.stable_words.update(text)
+                        display = (prefix + ' ' + stable).strip()
+                        if display:
+                            if stable and self.stable_language is None:
+                                self.stable_language = info.language
+                            self.preview((display, '', (self.stable_language or info.language).upper()))
             except Exception:
                 # A preview is optional; the final recognition still reports its own errors.
                 continue
@@ -194,9 +233,14 @@ class WhisperStream:
     def clear_preview(self, hide=True):
         if self.preview is not None:
             with self.preview_lock:
+                committed = list(self.stable_words.committed)
                 self.preview_generation += 1
+                self.stable_words = StableWords()
+                self.stable_language = None
                 if hide:
                     self.preview(None)
+                return committed
+        return []
 
     def close(self):
         if self.preview_thread is not None:
@@ -228,7 +272,7 @@ class WhisperStream:
                 self.frames.extend(frame)
                 self.voiced += int(probability >= 0.62)
             self.quiet = 0 if probability >= 0.38 else self.quiet + 1
-            if self.quiet >= 32:
+            if self.quiet >= self.quiet_frames:
                 self.finish(final=True)
             elif len(self.frames) >= 24 * RATE * 2:
                 self.finish(final=False)
@@ -250,7 +294,7 @@ class WhisperStream:
             self.line(sentence, translated, speaker, direction)
 
     def finish(self, final):
-        self.clear_preview(hide=False)
+        committed = self.clear_preview(hide=False)
         pcm = bytes(self.frames)
         if final:
             self.frames.clear()
@@ -282,6 +326,14 @@ class WhisperStream:
             for seg in segments:
                 if reliable(seg):
                     words.extend(seg.words or [])
+        # Preserve words already shown; subsequent decoding may revise them.
+        for i, shown in enumerate(committed):
+            if i >= len(words):
+                last_end = words[-1].end if words else 0.0
+                words.append(SimpleNamespace(word=(' ' if i else '') + shown, start=last_end, end=last_end))
+            else:
+                original = words[i]
+                words[i] = SimpleNamespace(word=(' ' if i else '') + shown, start=original.start, end=original.end)
         if not final:
             # Prefer punctuation away from the uncertain right edge. Otherwise keep the
             # unfinished sentence as text and re-decode its audio tail with the next window.

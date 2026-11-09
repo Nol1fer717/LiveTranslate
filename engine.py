@@ -4,6 +4,7 @@ import audioop
 import ctypes
 import json
 import queue
+import re
 import sys
 import threading
 import time
@@ -18,7 +19,7 @@ import sentencepiece
 from sacremoses import MosesDetokenizer, MosesPunctNormalizer, MosesTokenizer
 from subword_nmt.apply_bpe import BPE
 from vosk import KaldiRecognizer, Model, SetLogLevel
-from whisper_stream import WhisperStream
+from whisper_stream import StableWords, WhisperStream, remove_phantom_outro
 
 ROOT = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 DATA = ROOT / "data"
@@ -26,6 +27,17 @@ SPEAKER_PATH = DATA / "vosk-model-spk-0.4"
 MODELS = {"ru": "vosk-model-small-ru-0.22", "en": "vosk-model-small-en-us-0.15"}
 SetLogLevel(-1)
 DEVICE_LOCK = threading.Lock()
+
+
+def prepare_spoken_russian(text):
+    """Clarify a few ambiguous colloquialisms for the local translation model.
+
+    This only changes the model input; the original transcript stays intact.
+    """
+    text = re.sub(r'(?i)\bпоходу(?=\s+(?:как-то|это|он[аои]?|я|мы|вы|ты|они)\b)', 'похоже', text)
+    text = re.sub(r'(?i)\bху[её]во\s+работает\b', 'пиздец как плохо работает', text)
+    text = re.sub(r'(?i)\bработает\s+ху[её]во\b', 'работает пиздец как плохо', text)
+    return text
 
 
 def devices():
@@ -53,6 +65,8 @@ class Language:
                                                   compute_type="auto", intra_threads=2)
 
     def translate(self, text):
+        if self.source == "ru":
+            text = prepare_spoken_russian(text)
         pieces = self.tokens.encode(text, out_type=str)
         result = self.translator.translate_batch([pieces], beam_size=3)[0]
         return self.tokens.decode(result.hypotheses[0]).strip()
@@ -138,7 +152,7 @@ class SessionSpeakers:
         return f"Голос {len(self.centres)}"
 
 
-def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None, diarizer=None):
+def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None, diarizer=None, split_level=5):
     """Capture continuously while speech recognition and translation consume queued blocks."""
     chunks = queue.Queue(maxsize=200)
     analysis = queue.Queue(maxsize=6000)  # Up to ten minutes of compact mono PCM if inference falls behind.
@@ -157,10 +171,10 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         automatic = WhisperStream(whisper, language, speaker_model, speakers,
                                   lambda *line: emit("line", target, line),
                                   lambda text: emit("partial", target, text),
-                                  lambda result: emit("preview", target, result), diarizer=diarizer)
+                                  lambda result: emit("preview", target, result), diarizer=diarizer, split_level=split_level)
     resampler = None
     partial = ""
-    last_partial_translation = 0.0
+    stable_partial = StableWords()
 
     def callback(data, count, timing, flags):
         try:
@@ -171,14 +185,19 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         return None, pa.paContinue
 
     def publish(result):
-        nonlocal partial
+        nonlocal partial, stable_partial
         phrase = json.loads(result)
         text = phrase.get("text", "").strip()
+        if stable_partial.committed:
+            words = text.split()
+            text = ' '.join(stable_partial.committed + words[len(stable_partial.committed):])
+        text = remove_phantom_outro(text)
         if text:
             who = speakers.label(phrase) if speakers is not None else None
             emit("line", target, (text, language.translate(text), who))
         emit("preview", target, None)
         partial = ""
+        stable_partial = StableWords()
         emit("partial", target, "")
 
     def flush():
@@ -189,7 +208,7 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
             decoder.Reset()
 
     def recognize():
-        nonlocal partial, last_partial_translation
+        nonlocal partial
         try:
             for item in iter(analysis.get, end):
                 if item is gap:
@@ -200,14 +219,10 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                     publish(decoder.Result())
                 else:
                     current = json.loads(decoder.PartialResult()).get("partial", "")
-                    if current != partial:
-                        partial = current
-                        emit("partial", target, partial)
-                        if not current:
-                            emit("preview", target, None)
-                        elif time.monotonic() - last_partial_translation >= 1.0:
-                            last_partial_translation = time.monotonic()
-                            emit("preview", target, (current, language.translate(current), language.source.upper()))
+                    stable = stable_partial.update(remove_phantom_outro(current))
+                    if stable and stable != partial:
+                        partial = stable
+                        emit("partial", target, stable)
             flush()
         except Exception as exc:
             errors.append(exc)
