@@ -6,10 +6,19 @@ import wave
 from pathlib import Path
 from unittest.mock import patch
 
-from engine import capture
+import numpy as np
+from engine import capture, mono16
 
 
 class CaptureTests(unittest.TestCase):
+    def test_surround_loopback_uses_front_channels_without_attenuation(self):
+        frames = np.array([[12000, 8000, 0, 0, 0, 0, 0, 0]], dtype="<i2")
+        self.assertEqual(np.frombuffer(mono16(frames.tobytes(), 8, True), "<i2").tolist(), [10000])
+        self.assertEqual(np.frombuffer(mono16(frames.tobytes(), 8), "<i2").tolist(), [2500])
+
+    def test_surround_loopback_keeps_center_channel(self):
+        frames = np.array([[0, 0, 12000, 0, 0, 0]], dtype="<i2")
+        self.assertEqual(np.frombuffer(mono16(frames.tobytes(), 6, True), "<i2").tolist(), [12000])
     def test_wav_keeps_audio_and_silence_while_recognizer_is_blocked(self):
         block = bytes.fromhex("1000") * 1600
         stalled = threading.Event()
@@ -25,6 +34,9 @@ class CaptureTests(unittest.TestCase):
                     raise TimeoutError("WAV writer did not run while inference was blocked")
 
             def flush(self):
+                pass
+
+            def close(self):
                 pass
 
         class Device:

@@ -1,186 +1,287 @@
 import queue
+import os
 import threading
 import tkinter as tk
-import pyaudiowpatch as pa
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+import pyaudiowpatch as pa
 from vosk import SpkModel
-from engine import DATA, Language, SPEAKER_PATH, capture, devices
+
+from engine import DATA, GermanTranslation, Language, SPEAKER_PATH, capture, devices
 from whisper_stream import load_whisper
 
 SOURCES = ("Микрофон", "Звук компьютера")
-DIRECTIONS = ("Авто · Whisper", "Русский → Английский", "Английский → Русский")
-
-
-class Channel:
-    def __init__(self, parent, index):
-        panel = ttk.Frame(parent, padding=(16, 12), style="Card.TFrame")
-        panel.grid(row=index + 1, column=0, sticky="nsew", pady=(0, 10))
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(2, weight=1)
-        header = ttk.Frame(panel, style="Card.TFrame")
-        header.grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text=SOURCES[index], style="Title.TLabel").pack(side="left")
-        if index == 1:
-            available = SPEAKER_PATH.is_dir()
-            self.identify = tk.BooleanVar(value=available)
-            self.speaker_check = ttk.Checkbutton(header, text="Различать голоса" if available else "Модель голосов не установлена",
-                                                 variable=self.identify, style="Card.TCheckbutton",
-                                                 state="normal" if available else "disabled")
-            self.speaker_check.pack(side="left", padx=(10, 0))
-        self.direction = ttk.Combobox(panel, values=DIRECTIONS, state="readonly", width=23)
-        self.direction.current(0)
-        self.direction.grid(row=0, column=1, sticky="e")
-        self.device = ttk.Combobox(panel, state="readonly")
-        self.device.grid(row=1, column=0, columnspan=2, sticky="ew", pady=7)
-        self.history = tk.Text(panel, wrap="word", height=4, relief="flat", bg="#f4f7f8",
-                               padx=10, pady=6, state="disabled", font=("Segoe UI", 13))
-        self.history.grid(row=2, column=0, columnspan=2, sticky="nsew")
-        self.history.tag_configure("source", foreground="#55676d", font=("Segoe UI", 10))
-        self.history.tag_configure("target", foreground="#132c35", spacing3=8)
-        self.history.tag_configure("speaker", foreground="#085c58", font=("Segoe UI", 10, "bold"))
-        self.partial = tk.StringVar()
-        ttk.Label(panel, textvariable=self.partial, style="Partial.TLabel", anchor="w").grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-
-    def options(self, devices):
-        self.items = [None, *devices]
-        names = ["Отключён", *(d["name"] for d in devices)]
-        self.device.configure(values=names)
-        self.device.current(1 if devices else 0)
-
-    def line(self, source, target, speaker=None, direction=None):
-        self.history.configure(state="normal")
-        label = " · ".join(item for item in (speaker, direction) if item)
-        if label:
-            self.history.insert("end", label + "\n", "speaker")
-        self.history.insert("end", source + "\n", "source")
-        self.history.insert("end", target + "\n", "target")
-        self.history.see("end")
-        self.history.configure(state="disabled")
-
-    def start_session(self):
-        if self.history.compare("end-1c", ">", "1.0"):
-            self.history.configure(state="normal")
-            self.history.insert("end", "Новый сеанс · " + datetime.now().strftime("%H:%M") + "\n", "source")
-            self.history.configure(state="disabled")
+DIRECTIONS = ("Автоопределение", "Русский → Английский", "Английский → Русский")
+MODES = ("Микрофон", "Звук компьютера", "Микрофон + компьютер")
+VIEWS = ("Оба", "Транскрипция", "Перевод")
+BG, CARD, FIELD = "#111c30", "#1b2941", "#253550"
+TEXT, MUTED, BLUE, PURPLE = "#f1f5ff", "#9caec9", "#58a5ff", "#ba91ff"
 
 
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("Переводчик речи")
-        root.geometry("800x700")
-        root.minsize(610, 490)
-        style = ttk.Style(root)
-        style.theme_use("clam")
-        style.configure("TFrame", background="#edf2f3")
-        style.configure("Card.TFrame", background="white")
-        style.configure("Title.TLabel", background="white", foreground="#162e39", font=("Segoe UI", 13, "bold"))
-        style.configure("Partial.TLabel", background="white", foreground="#517068")
-        style.configure("TCheckbutton", background="#edf2f3")
-        style.configure("Card.TCheckbutton", background="white")
-        root.configure(background="#edf2f3")
+        root.title("LiveTranslate")
+        root.geometry("980x760")
+        root.minsize(760, 600)
+        root.configure(bg=BG)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
-        page = ttk.Frame(root, padding=16)
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        style.configure("Dark.TCombobox", fieldbackground=FIELD, background=FIELD,
+                        foreground=TEXT, arrowcolor=TEXT, padding=6)
+        style.map("Dark.TCombobox", fieldbackground=[("readonly", FIELD)],
+                  foreground=[("readonly", TEXT)])
+        style.configure("Vertical.TScrollbar", background=FIELD, troughcolor=CARD, bordercolor=CARD,
+                        arrowcolor=MUTED)
+
+        page = tk.Frame(root, bg=BG, padx=28, pady=24)
         page.grid(sticky="nsew")
         page.columnconfigure(0, weight=1)
-        for row in (1, 2):
-            page.rowconfigure(row, weight=1)
-        ttk.Label(page, text="Перевод разговора", font=("Segoe UI", 20, "bold"),
-                  foreground="#17343b", background="#edf2f3").grid(row=0, sticky="w", pady=(0, 12))
-        self.channels = [Channel(page, i) for i in range(2)]
-        bar = ttk.Frame(page)
-        bar.grid(row=3, sticky="ew")
-        self.start = ttk.Button(bar, text="Начать перевод", command=self.toggle)
-        self.start.pack(side="left")
-        self.refresh = ttk.Button(bar, text="Обновить устройства", command=self.scan)
-        self.refresh.pack(side="left", padx=8)
+        page.rowconfigure(4, weight=1)
+
+        header = tk.Frame(page, bg=BG)
+        header.grid(row=0, sticky="ew", pady=(0, 20))
+        tk.Label(header, text="LiveTranslate", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 24, "bold")).pack(side="left")
+        self.status = tk.StringVar(value="Выберите источник и начните перевод")
+        tk.Label(header, textvariable=self.status, bg=BG, fg=MUTED,
+                 font=("Segoe UI", 10), anchor="e").pack(side="right", fill="x", expand=True, padx=(18, 0))
+
+        controls = tk.Frame(page, bg=CARD, padx=18, pady=16, highlightthickness=1,
+                            highlightbackground="#364b6a")
+        controls.grid(row=1, sticky="ew", pady=(0, 18))
+        controls.columnconfigure(0, weight=1)
+
+        top = tk.Frame(controls, bg=CARD)
+        top.grid(row=0, sticky="ew")
+        tk.Label(top, text="Язык", bg=CARD, fg=MUTED, font=("Segoe UI", 10)).pack(side="left", padx=(0, 10))
+        self.direction = ttk.Combobox(top, values=DIRECTIONS, state="readonly", width=25, style="Dark.TCombobox")
+        self.direction.current(0)
+        self.direction.pack(side="left")
+        self.start = tk.Button(top, text="Начать перевод", command=self.toggle, bg="#367df2", fg="white",
+                               activebackground="#2a65c6", activeforeground="white", relief="flat",
+                               padx=20, pady=8, cursor="hand2", font=("Segoe UI", 10, "bold"))
+        self.start.pack(side="right")
+
+        self.mode = tk.StringVar(value=MODES[2])
+        self.mode_buttons = []
+        mode_bar = tk.Frame(controls, bg=CARD)
+        mode_bar.grid(row=1, sticky="ew", pady=(16, 6))
+        for label in MODES:
+            button = tk.Button(mode_bar, text=label, command=lambda value=label: self.set_mode(value),
+                               relief="flat", padx=14, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"))
+            button.pack(side="left", padx=(0, 6))
+            self.mode_buttons.append(button)
+
+        choices = tk.Frame(controls, bg=CARD)
+        choices.grid(row=2, sticky="ew", pady=(8, 0))
+        choices.columnconfigure((0, 1), weight=1, uniform="device")
+        self.device_boxes = []
+        for index, title in enumerate(SOURCES):
+            group = tk.Frame(choices, bg=CARD)
+            group.grid(row=0, column=index, sticky="ew", padx=(0, 8) if index == 0 else (8, 0))
+            group.columnconfigure(0, weight=1)
+            tk.Label(group, text=title, bg=CARD, fg=MUTED, font=("Segoe UI", 9)).grid(sticky="w", pady=(0, 4))
+            box = ttk.Combobox(group, state="readonly", style="Dark.TCombobox", width=18)
+            box.grid(row=1, column=0, sticky="ew")
+            self.device_boxes.append(box)
+
+        options = tk.Frame(controls, bg=CARD)
+        options.grid(row=3, sticky="ew", pady=(10, 0))
+        self.identify = tk.BooleanVar(value=SPEAKER_PATH.is_dir())
+        self.speaker_check = tk.Checkbutton(options, text="Различать голоса", variable=self.identify,
+                                            bg=CARD, fg=TEXT, selectcolor=FIELD, activebackground=CARD,
+                                            activeforeground=TEXT, highlightthickness=0)
+        self.speaker_check.pack(side="left")
         self.save = tk.BooleanVar()
-        self.check = ttk.Checkbutton(bar, text="Сохранять звук в WAV", variable=self.save)
-        self.check.pack(side="right")
-        self.status = tk.StringVar(value="Выберите устройства и начните перевод.")
-        ttk.Label(page, textvariable=self.status, background="#edf2f3", wraplength=640,
-                  foreground="#344e54").grid(row=4, sticky="w", pady=(8, 0))
+        self.check = tk.Checkbutton(options, text="Сохранять звук в WAV", variable=self.save,
+                                    bg=CARD, fg=TEXT, selectcolor=FIELD, activebackground=CARD,
+                                    activeforeground=TEXT, highlightthickness=0)
+        self.check.pack(side="left", padx=(18, 0))
+        self.refresh = tk.Button(options, text="Обновить устройства", command=self.scan, bg=CARD, fg=BLUE,
+                                 activebackground=FIELD, activeforeground=TEXT, relief="flat", cursor="hand2")
+        self.refresh.pack(side="right")
+
+        view_bar = tk.Frame(page, bg=BG)
+        view_bar.grid(row=2, sticky="ew", pady=(0, 10))
+        self.view = tk.StringVar(value=VIEWS[0])
+        self.view_buttons = []
+        for label in VIEWS:
+            button = tk.Button(view_bar, text=label, command=lambda value=label: self.set_view(value),
+                               relief="flat", padx=16, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"))
+            button.pack(side="left", padx=(0, 4))
+            self.view_buttons.append(button)
+
+        results = tk.Frame(page, bg=CARD, highlightthickness=1, highlightbackground="#364b6a")
+        results.grid(row=4, sticky="nsew")
+        results.rowconfigure(0, weight=1)
+        results.columnconfigure(0, weight=1)
+        self.history = tk.Text(results, wrap="word", bg=CARD, fg=TEXT, insertbackground=TEXT,
+                               selectbackground="#38547b", relief="flat", padx=20, pady=18,
+                               font=("Segoe UI", 12), state="disabled", cursor="arrow")
+        self.history.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(results, orient="vertical", command=self.history.yview, style="Vertical.TScrollbar")
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 4), pady=8)
+        self.history.configure(yscrollcommand=scrollbar.set)
+        self.history.tag_configure("meta", foreground=MUTED, font=("Segoe UI", 9), spacing1=12, spacing3=6)
+        self.history.tag_configure("source_label", foreground=BLUE, font=("Segoe UI", 10, "bold"))
+        self.history.tag_configure("target_label", foreground=PURPLE, font=("Segoe UI", 10, "bold"))
+        self.history.tag_configure("source", foreground="#d6e2f5", font=("Segoe UI", 12), spacing3=6)
+        self.history.tag_configure("target", foreground=TEXT, font=("Segoe UI", 13), spacing3=12)
+        self.history.tag_configure("placeholder", foreground=MUTED, font=("Segoe UI", 11))
+
         self.events = queue.SimpleQueue()
+        self.entries = []
+        self.previews = {}
+        self.partials = {}
         self.stop = None
         self.closing = False
         self.cache = {}
         self.speaker_model = None
         self.whisper = None
+        self.device_items = [[], []]
         self.scan()
+        self.set_mode(self.mode.get())
+        self.set_view(self.view.get())
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.poll()
 
+    def set_mode(self, mode):
+        self.mode.set(mode)
+        for button, label in zip(self.mode_buttons, MODES):
+            selected = label == mode
+            button.configure(bg="#294d80" if selected else CARD, fg=BLUE if selected else "#cfdaeb",
+                             activebackground="#294d80", activeforeground=TEXT)
+        self.update_devices()
+
+    def update_devices(self):
+        active = (self.mode.get() != MODES[1], self.mode.get() != MODES[0])
+        for index, box in enumerate(self.device_boxes):
+            box.configure(state="readonly" if active[index] and self.stop is None else "disabled")
+        self.speaker_check.configure(state="normal" if active[1] and self.stop is None and SPEAKER_PATH.is_dir() else "disabled")
+
+    def set_view(self, view):
+        self.view.set(view)
+        for button, label in zip(self.view_buttons, VIEWS):
+            button.configure(bg="#284a7a" if label == view else "#1b2941",
+                             fg=BLUE if label == view else "#cfdaeb",
+                             activebackground="#284a7a", activeforeground=TEXT)
+        self.render()
+        self.render_preview()
+
     def scan(self):
         try:
-            lists = devices()
-            for channel, items in zip(self.channels, lists):
-                channel.options(items)
-            self.status.set("Выберите устройства и начните перевод.")
+            self.device_items = list(devices())
+            for box, items in zip(self.device_boxes, self.device_items):
+                box.configure(values=[d["name"] for d in items])
+                if items:
+                    box.current(0)
+            self.status.set("Выберите источник и начните перевод")
+            self.update_devices()
         except Exception as exc:
-            for channel in self.channels:
-                channel.options([])
-            self.status.set(f"Ошибка получения устройств: {exc}")
+            self.status.set(f"Не удалось получить устройства: {exc}")
+
+    def render(self):
+        self.history.configure(state="normal")
+        self.history.delete("1.0", "end")
+        if not self.entries and not any(self.previews.values()) and not any(self.partials.values()):
+            self.history.insert("end", "Здесь появятся распознанная речь и перевод.", "placeholder")
+        for entry in self.entries:
+            if entry.get("session"):
+                self.history.insert("end", entry["session"] + "\n", "meta")
+                continue
+            meta = " · ".join(x for x in (entry["time"], SOURCES[entry["index"]], entry["speaker"]) if x)
+            self.history.insert("end", meta + "\n", "meta")
+            if self.view.get() != VIEWS[2]:
+                self.history.insert("end", f'[{entry["from"]}]  ', "source_label")
+                self.history.insert("end", entry["source"] + "\n", "source")
+            if self.view.get() != VIEWS[1]:
+                self.history.insert("end", f'[{entry["to"]}]  ', "target_label")
+                self.history.insert("end", entry["target"] + "\n", "target")
+        for index, value in self.previews.items():
+            if not value:
+                continue
+            source, target, *language = value
+            source_lang = language[0] if language else "…"
+            target_lang = "EN" if source_lang == "RU" else "RU"
+            self.history.insert("end", f"{SOURCES[index]} · Перевод обновляется\n", "meta")
+            if self.view.get() != VIEWS[2]:
+                self.history.insert("end", f"[{source_lang}]  ", "source_label")
+                self.history.insert("end", source + "\n", "source")
+            if self.view.get() != VIEWS[1]:
+                self.history.insert("end", f"[{target_lang}]  ", "target_label")
+                self.history.insert("end", target + "\n", "target")
+        if self.view.get() != VIEWS[2]:
+            for index, partial in self.partials.items():
+                if partial and not self.previews.get(index):
+                    self.history.insert("end", f"{SOURCES[index]} · Распознавание\n", "meta")
+                    self.history.insert("end", partial + "\n", "source")
+        self.history.see("end")
+        self.history.configure(state="disabled")
+
+    def render_preview(self):
+        self.render()
 
     def toggle(self):
         if self.stop is not None:
             self.stop.set()
             self.start.configure(state="disabled")
-            self.status.set("Завершение последней фразы…")
+            self.status.set("Завершаем обработку…")
             return
+        indices = ((0,), (1,), (0, 1))[MODES.index(self.mode.get())]
         selected = []
-        for index, channel in enumerate(self.channels):
-            device = channel.items[channel.device.current()]
-            if device:
-                lang = ("auto", "ru", "en")[channel.direction.current()]
-                selected.append((index, device, lang))
-        if not selected:
-            self.status.set("Выберите хотя бы одно устройство.")
-            return
+        for index in indices:
+            position = self.device_boxes[index].current()
+            if position < 0:
+                messagebox.showerror("Устройство", f"Не найдено устройство: {SOURCES[index]}")
+                return
+            selected.append((index, self.device_items[index][position],
+                             ("auto", "ru", "en")[self.direction.current()]))
         folder = None
         if self.save.get():
-            folder = Path.home() / "Documents" / "VoiceTranslator Recordings" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            folder = Path(os.environ["LOCALAPPDATA"]) / "LiveTranslate" / "Recordings" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             try:
                 folder.mkdir(parents=True)
             except OSError as exc:
                 messagebox.showerror("Запись", str(exc))
                 return
+        if self.entries:
+            self.entries.append({"session": "Новый сеанс · " + datetime.now().strftime("%H:%M")})
+            self.render()
         self.folder = folder
         self.stop = threading.Event()
         self.failure = ""
         self.active_count = len(selected)
         self.ready = 0
-        for channel in self.channels:
-            channel.direction.configure(state="disabled")
-            channel.device.configure(state="disabled")
+        self.direction.configure(state="disabled")
         self.refresh.configure(state="disabled")
         self.check.configure(state="disabled")
-        self.channels[1].speaker_check.configure(state="disabled")
+        for button in self.mode_buttons:
+            button.configure(state="disabled")
+        self.update_devices()
         self.start.configure(text="Остановить")
-        self.status.set("Подготовка моделей и устройств…")
-        detect = self.channels[1].identify.get() and any(index == 1 for index, _, _ in selected)
+        self.status.set("Подготавливаем модели и устройства…")
+        detect = self.identify.get() and any(index == 1 for index, _, _ in selected)
         threading.Thread(target=self.session, args=(selected, folder, self.stop, detect), daemon=True).start()
 
     def session(self, selected, folder, stop, detect):
         def emit(kind, index, value):
             self.events.put((kind, index, value))
 
-        def run(audio, index, device, lang):
+        def run(audio, index, lang, device):
             try:
                 path = folder / ("microphone.wav", "computer.wav")[index] if folder else None
                 speaker_model = self.speaker_model if index == 1 and detect else None
-                automatic = lang == "auto"
-                capture(audio, device, self.cache if automatic else self.cache[lang],
-                        index, stop, emit, path, speaker_model, self.whisper if automatic else None)
+                capture(audio, device, self.cache if lang == "auto" else self.cache[lang],
+                        index, stop, emit, path, speaker_model, self.whisper if lang == "auto" else None)
             except Exception as exc:
                 emit("error", index, str(exc))
                 stop.set()
 
-        workers = []
         try:
             if detect and self.speaker_model is None:
                 self.speaker_model = SpkModel(str(SPEAKER_PATH))
@@ -188,16 +289,19 @@ class App:
                 if stop.is_set():
                     break
                 if lang == "auto" and self.whisper is None:
-                    self.whisper = load_whisper(DATA / "whisper-base")
+                    self.whisper = load_whisper(DATA / "whisper-small")
                 for src in (("ru", "en") if lang == "auto" else (lang,)):
                     if src not in self.cache:
                         self.cache[src] = Language(src)
+                if lang == "auto" and "de" not in self.cache:
+                    self.cache["de"] = GermanTranslation(self.cache["en"])
             with pa.PyAudio() as audio:
+                workers = []
                 try:
-                    for item in selected:
+                    for index, device, lang in selected:
                         if stop.is_set():
                             break
-                        worker = threading.Thread(target=run, args=(audio, *item))
+                        worker = threading.Thread(target=run, args=(audio, index, lang, device))
                         worker.start()
                         workers.append(worker)
                 except Exception:
@@ -216,31 +320,47 @@ class App:
         while not self.events.empty():
             kind, index, value = self.events.get()
             if kind == "partial":
-                self.channels[index].partial.set(value)
+                self.partials[index] = value
+                self.render_preview()
+            elif kind == "preview":
+                self.previews[index] = value
+                self.render_preview()
             elif kind == "line":
-                self.channels[index].line(*value)
+                source, target, *extra = value
+                speaker = extra[0] if extra else None
+                direction = extra[1] if len(extra) > 1 else None
+                if direction and "→" in direction:
+                    source_lang, target_lang = (part.strip() for part in direction.split("→", 1))
+                else:
+                    source_lang, target_lang = (("RU", "EN") if self.direction.current() == 1 else ("EN", "RU"))
+                self.entries.append({"time": datetime.now().strftime("%H:%M:%S"), "index": index,
+                                     "speaker": speaker, "from": source_lang, "to": target_lang,
+                                     "source": source, "target": target})
+                self.render()
             elif kind == "ready":
-                self.channels[index].start_session()
                 self.ready += 1
                 if self.ready == self.active_count and not self.stop.is_set():
-                    self.status.set("Идёт перевод. Говорите в микрофон или включите речь на компьютере.")
+                    device = getattr(getattr(self.whisper, "model", None), "device", None)
+                    suffix = " · NVIDIA GPU" if device == "cuda" else (" · CPU" if device == "cpu" else "")
+                    self.status.set("Перевод включён" + suffix)
             elif kind == "error":
-                name = SOURCES[index] if index is not None else "Модели"
-                self.failure = f"{name}: {value}"
+                self.failure = f"{SOURCES[index] if index is not None else 'Модели'}: {value}"
             elif kind == "done":
                 self.stop = None
                 if self.closing:
                     self.root.destroy()
                     return
-                for channel in self.channels:
-                    channel.device.configure(state="readonly")
-                    channel.direction.configure(state="readonly")
-                    channel.partial.set("")
+                self.previews.clear()
+                self.partials.clear()
+                self.render_preview()
+                self.direction.configure(state="readonly")
                 self.refresh.configure(state="normal")
                 self.check.configure(state="normal")
-                self.channels[1].speaker_check.configure(state="normal" if SPEAKER_PATH.is_dir() else "disabled")
+                for button in self.mode_buttons:
+                    button.configure(state="normal")
+                self.update_devices()
                 self.start.configure(text="Начать перевод", state="normal")
-                self.status.set(self.failure or (f"Записи: {self.folder}" if self.folder else "Перевод остановлен."))
+                self.status.set(self.failure or (f"Записи: {self.folder}" if self.folder else "Перевод остановлен"))
         self.root.after(75, self.poll)
 
     def close(self):
@@ -248,7 +368,9 @@ class App:
             self.root.destroy()
         else:
             self.closing = True
-            self.toggle()
+            self.stop.set()
+            self.start.configure(state="disabled")
+            self.status.set("Завершаем обработку…")
 
 
 if __name__ == "__main__":

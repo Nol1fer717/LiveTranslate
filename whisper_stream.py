@@ -1,7 +1,13 @@
 from collections import deque
 import json
+import os
 import re
+import queue
+import sys
+import threading
+from pathlib import Path
 
+import ctranslate2
 import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.vad import get_speech_timestamps, get_vad_model
@@ -12,9 +18,39 @@ RATE = 16000
 FRAME = 512  # Silero's 32 ms analysis window
 END_OF_SENTENCE = re.compile(r"""[.!?…]["'»”)]*$""")
 REPEATED_NUMBER = re.compile(r"(?<!\d)(\d+)(?:[\s.,;:\-–—]+\1(?!\d)){6,}")
+TECHNICAL_TERMS = "SSH, PostgreSQL, Postgres, Nginx, Linux, Docker, Kubernetes, GitHub, SQL, API."
+TERM_PATTERNS = [
+    (re.compile(r"(?<!\w)(?:ссш|ссн|эс[ -]?эс[ -]?(?:эйч|аш)|ssh)(?!\w)", re.I), "SSH"),
+    (re.compile(r"(?<!\w)(?:постгрес(?:с(?:а|у|ом|е)?)?|позгрес(?:с(?:а|у|ом|е)?)?|postgress|postgresql)(?!\w)", re.I), "PostgreSQL"),
+    (re.compile(r"(?<!\w)(?:энджинкс(?:а|у|ом|е)?|инжинкс(?:а|у|ом|е)?|nginx)(?!\w)", re.I), "Nginx"),
+]
+_DLL_DIRECTORIES = []
+
+
+def normalize_terms(text):
+    text = re.sub(r"(?i)(\b(?:доступ|подключени\w*)\s+по\s+)(?:ссс|сс|cc|ccc)(?!\w)", r"\1SSH", text)
+    for pattern, canonical in TERM_PATTERNS:
+        text = pattern.sub(canonical, text)
+    return text
 
 
 def load_whisper(folder):
+    package_root = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(sys.prefix) / "Lib" / "site-packages"
+    for name in ("cublas", "cudnn", "cuda_nvrtc"):
+        directory = package_root / "nvidia" / name / "bin"
+        if directory.is_dir():
+            _DLL_DIRECTORIES.append(os.add_dll_directory(str(directory)))
+            if str(directory) not in os.environ.get("PATH", "").split(os.pathsep):
+                os.environ["PATH"] = str(directory) + os.pathsep + os.environ.get("PATH", "")
+    try:
+        if ctranslate2.get_cuda_device_count():
+            model = WhisperModel(str(folder), device="cuda", compute_type="float16", cpu_threads=3,
+                                 num_workers=2, local_files_only=True)
+            # Initialize CUDA and cuDNN before capture starts, and verify that inference works.
+            list(model.transcribe(np.zeros(RATE, dtype=np.float32), language="ru", beam_size=1)[0])
+            return model
+    except (RuntimeError, OSError):
+        pass
     return WhisperModel(str(folder), device="cpu", compute_type="int8", cpu_threads=3,
                         num_workers=2, local_files_only=True)
 
@@ -45,7 +81,7 @@ class SpeechGate:
 
 class WhisperStream:
     """Buffer speech until a pause; retain undecided words across long windows."""
-    def __init__(self, model, languages, speaker_model, speakers, line, partial):
+    def __init__(self, model, languages, speaker_model, speakers, line, partial, preview=None):
         self.model = model
         self.languages = languages
         self.speakers = speakers
@@ -63,6 +99,69 @@ class WhisperStream:
         self.previous_language = self.previous_speaker = None
         self.unfinished = ""
         self.last_voice = self.clock = 0
+        self.preview = preview
+        self.preview_lock = threading.Lock()
+        self.preview_generation = 0
+        self.preview_at = 0
+        self.preview_queue = queue.Queue(maxsize=1)
+        self.preview_thread = None
+        if preview is not None:
+            self.preview_thread = threading.Thread(target=self.run_preview, daemon=True)
+            self.preview_thread.start()
+
+    def run_preview(self):
+        while True:
+            item = self.preview_queue.get()
+            if item is None:
+                return
+            generation, pcm, prefix = item
+            try:
+                audio = np.frombuffer(pcm, "<i2").astype(np.float32) / 32768
+                segments, info = self.model.transcribe(audio, language=None, beam_size=1, temperature=0,
+                                                       condition_on_previous_text=False, hotwords=TECHNICAL_TERMS)
+                text = " ".join(s.text.strip() for s in segments if reliable(s)).strip()
+                if not text or info.language_probability < 0.42 or info.language not in self.languages:
+                    continue
+                text = normalize_terms((prefix + " " + text).strip())
+                translated = self.languages[info.language].translate(text)
+                with self.preview_lock:
+                    if generation == self.preview_generation:
+                        self.preview((text, translated, info.language.upper()))
+            except Exception:
+                # A preview is optional; the final recognition still reports its own errors.
+                continue
+
+    def queue_preview(self):
+        if self.preview is None or len(self.frames) < 0.75 * RATE * 2 or self.clock - self.preview_at < 0.75 * RATE:
+            return
+        self.preview_at = self.clock
+        with self.preview_lock:
+            item = (self.preview_generation, bytes(self.frames), self.unfinished)
+        try:
+            self.preview_queue.put_nowait(item)
+        except queue.Full:
+            try:
+                self.preview_queue.get_nowait()
+                self.preview_queue.put_nowait(item)
+            except (queue.Empty, queue.Full):
+                pass
+
+    def clear_preview(self, hide=True):
+        if self.preview is not None:
+            with self.preview_lock:
+                self.preview_generation += 1
+                if hide:
+                    self.preview(None)
+
+    def close(self):
+        if self.preview_thread is not None:
+            self.clear_preview()
+            try:
+                self.preview_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self.preview_queue.put(None)
+            self.preview_thread.join()
 
     def accept(self, pcm):
         self.pending.extend(pcm)
@@ -88,23 +187,28 @@ class WhisperStream:
                 self.finish(final=True)
             elif len(self.frames) >= 24 * RATE * 2:
                 self.finish(final=False)
+            else:
+                self.queue_preview()
 
     def publish(self, text, language, speaker):
         translation = self.languages.get(language)
-        direction = {"en": "EN → RU", "ru": "RU → EN"}.get(language, language.upper())
+        direction = {"en": "EN → RU", "ru": "RU → EN", "de": "DE → RU"}.get(language, language.upper())
         # Argos models translate a sentence at a time; a second sentence can be omitted
         # if it is appended to a long first sentence in the same translation request.
-        for sentence in re.split(r'(?<=[.!?…])\s+(?=[A-ZА-ЯЁ«"])', text):
-            translated = translation.translate(sentence) if translation else "Перевод доступен для русского и английского."
+        for sentence in re.split(r'(?<=[.!?…])\s+(?=[A-ZА-ЯЁ«"])', normalize_terms(text)):
+            translated = translation.translate(sentence) if translation else "Перевод доступен для русского, английского и немецкого."
             self.line(sentence, translated, speaker, direction)
 
     def finish(self, final):
+        self.clear_preview(hide=False)
         pcm = bytes(self.frames)
         if final:
             self.frames.clear()
             self.quiet = 0
         if self.voiced < 6:
             self.voiced = 0
+            if final:
+                self.clear_preview()
             return
         samples = np.frombuffer(pcm, "<i2").astype(np.float32) / 32768
         language, confidence, _ = self.model.detect_language(audio=samples)
@@ -121,7 +225,7 @@ class WhisperStream:
                 np.pad(samples, (0, 12800)) if final else samples,
                 language=language, beam_size=3, temperature=0, word_timestamps=True,
                 condition_on_previous_text=True, initial_prompt=self.previous_text if same_turn else None,
-                repetition_penalty=1.08, no_repeat_ngram_size=5)
+                repetition_penalty=1.08, no_repeat_ngram_size=5, hotwords=TECHNICAL_TERMS)
             for seg in segments:
                 if reliable(seg):
                     words.extend(seg.words or [])
@@ -150,6 +254,7 @@ class WhisperStream:
         if not text:
             if final:
                 self.flush_text()
+                self.clear_preview()
             return
         if not same_turn:
             self.flush_text()
@@ -162,6 +267,7 @@ class WhisperStream:
             self.unfinished = ""
             self.publish(combined, language, who)
             self.partial("")
+            self.clear_preview()
         else:
             self.unfinished = combined
             self.partial(combined)

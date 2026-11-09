@@ -1,9 +1,10 @@
 from types import SimpleNamespace
 import unittest
+import threading
 from unittest.mock import Mock
 
 import numpy as np
-from whisper_stream import RATE, WhisperStream
+from whisper_stream import RATE, WhisperStream, normalize_terms
 
 
 def segment(text, words):
@@ -12,6 +13,11 @@ def segment(text, words):
 
 
 class StreamTests(unittest.TestCase):
+    def test_technical_names(self):
+        self.assertEqual(normalize_terms("доступ по ССН к позгресса и инжинкса"),
+                         "доступ по SSH к PostgreSQL и Nginx")
+        self.assertEqual(normalize_terms("один два три"), "один два три")
+        self.assertEqual(normalize_terms("доступ по ССС к серверу"), "доступ по SSH к серверу")
     def setUp(self):
         self.lines = []
         self.partials = []
@@ -58,3 +64,22 @@ class StreamTests(unittest.TestCase):
             self.stream.voiced = 20
             self.stream.flush()
             self.assertEqual(len(self.lines), expected)
+
+    def test_late_preview_cannot_reappear_after_finalization(self):
+        started, release = threading.Event(), threading.Event()
+        preview = []
+        def slow_transcribe(*args, **kwargs):
+            started.set()
+            release.wait(3)
+            return [segment("Hello.", [(0, 1, "Hello.")])], SimpleNamespace(language="en", language_probability=0.9)
+        self.model.transcribe.side_effect = slow_transcribe
+        stream = WhisperStream(self.model, {"en": self.translation}, None, None, lambda *x: None,
+                               lambda x: None, preview.append)
+        stream.frames.extend(bytes(3 * RATE * 2))
+        stream.clock = 3 * RATE
+        stream.queue_preview()
+        self.assertTrue(started.wait(2))
+        stream.clear_preview()
+        release.set()
+        stream.close()
+        self.assertTrue(all(value is None for value in preview))

@@ -1,10 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, collect_delvewheel_libs_directory
 
 binaries = []
 binaries += collect_dynamic_libs('vosk')
 binaries += collect_dynamic_libs('ctranslate2')
+for package in ('cublas', 'cudnn', 'cuda_nvrtc'):
+    folder = Path(sys.prefix) / 'Lib' / 'site-packages' / 'nvidia' / package / 'bin'
+    binaries += [(str(path), f'nvidia/{package}/bin') for path in folder.glob('*.dll')]
 datas = collect_data_files('faster_whisper')
+datas += collect_data_files('sacremoses')
 datas, binaries = collect_delvewheel_libs_directory('av', datas=datas, binaries=binaries)
 
 

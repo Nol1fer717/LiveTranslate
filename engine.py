@@ -15,6 +15,8 @@ import ctranslate2
 import numpy as np
 import pyaudiowpatch as pa
 import sentencepiece
+from sacremoses import MosesDetokenizer, MosesPunctNormalizer, MosesTokenizer
+from subword_nmt.apply_bpe import BPE
 from vosk import KaldiRecognizer, Model, SetLogLevel
 from whisper_stream import WhisperStream
 
@@ -42,9 +44,10 @@ def devices():
 
 class Language:
     def __init__(self, src):
+        self.source = src
         dst = "ru" if src == "en" else "en"
         folder = DATA / f"translate-{src}_{dst}-1_9"
-        self.speech = Model(str(DATA / MODELS[src]))
+        self.speech = Model(str(DATA / MODELS[src])) if src in MODELS else None
         self.tokens = sentencepiece.SentencePieceProcessor(model_proto=(folder / "sentencepiece.model").read_bytes())
         self.translator = ctranslate2.Translator(str(folder / "model"), device="cpu",
                                                   compute_type="auto", intra_threads=2)
@@ -55,10 +58,35 @@ class Language:
         return self.tokens.decode(result.hypotheses[0]).strip()
 
 
-def mono16(data, channels):
+class GermanTranslation:
+    def __init__(self, english):
+        folder = DATA / "translate-de_en-1_9"
+        with (folder / "bpe.model").open(encoding="utf-8") as source:
+            self.bpe = BPE(source)
+        self.normalizer = MosesPunctNormalizer("de")
+        self.tokenizer = MosesTokenizer("de")
+        self.detokenizer = MosesDetokenizer("en")
+        self.translator = ctranslate2.Translator(str(folder / "model"), device="cpu",
+                                                  compute_type="auto", intra_threads=2)
+        self.english = english
+
+    def translate(self, text):
+        words = self.tokenizer.tokenize(self.normalizer.normalize(text))
+        pieces = self.bpe.segment_tokens(words)
+        result = self.translator.translate_batch([pieces], beam_size=3)[0]
+        english = self.detokenizer.detokenize(" ".join(result.hypotheses[0]).replace("@@ ", "").split())
+        return self.english.translate(english)
+
+
+def mono16(data, channels, loopback=False):
     if channels == 1:
         return data
     frames = np.frombuffer(data, dtype="<i2").reshape(-1, channels)
+    if loopback and channels > 2:
+        levels = np.sqrt(np.mean(frames.astype(np.float32) ** 2, axis=0))
+        active = levels > max(1.0, float(levels.max()) * 0.01)
+        if active.any():
+            frames = frames[:, active]
     return frames.mean(axis=1).astype("<i2").tobytes()
 
 
@@ -114,9 +142,11 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
     else:
         automatic = WhisperStream(whisper, language, speaker_model, speakers,
                                   lambda *line: emit("line", target, line),
-                                  lambda text: emit("partial", target, text))
+                                  lambda text: emit("partial", target, text),
+                                  lambda result: emit("preview", target, result))
     resampler = None
     partial = ""
+    last_partial_translation = 0.0
 
     def callback(data, count, timing, flags):
         try:
@@ -133,6 +163,7 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         if text:
             who = speakers.label(phrase) if speakers is not None else None
             emit("line", target, (text, language.translate(text), who))
+        emit("preview", target, None)
         partial = ""
         emit("partial", target, "")
 
@@ -144,7 +175,7 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
             decoder.Reset()
 
     def recognize():
-        nonlocal partial
+        nonlocal partial, last_partial_translation
         try:
             for item in iter(analysis.get, end):
                 if item is gap:
@@ -158,10 +189,18 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                     if current != partial:
                         partial = current
                         emit("partial", target, partial)
+                        if not current:
+                            emit("preview", target, None)
+                        elif time.monotonic() - last_partial_translation >= 1.0:
+                            last_partial_translation = time.monotonic()
+                            emit("preview", target, (current, language.translate(current), language.source.upper()))
             flush()
         except Exception as exc:
             errors.append(exc)
             stop.set()
+        finally:
+            if automatic is not None:
+                automatic.close()
 
     def submit(item):
         try:
@@ -235,7 +274,7 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                     resampler = None
                     if missing >= 1.3 and not in_gap:
                         submit(gap)
-                pcm, resampler = audioop.ratecv(mono16(data, channels), 2, 1, rate, 16000, resampler)
+                pcm, resampler = audioop.ratecv(mono16(data, channels, device.get("isLoopbackDevice", False)), 2, 1, rate, 16000, resampler)
                 if writer:
                     writer.writeframesraw(pcm)
                 last_packet = arrival
