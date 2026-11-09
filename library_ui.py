@@ -1,19 +1,21 @@
+import re
 import sqlite3
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
+from windows_spelling import suggestions as spelling_suggestions
+from theme import BG, CARD, FIELD, TEXT, MUTED, ACCENT, ACCENT_DARK, ACCENT_SOFT, BORDER, HOVER, SELECTION
 
-BG, CARD, FIELD = '#111c30', '#1b2941', '#253550'
-TEXT, MUTED, BLUE = '#f1f5ff', '#9caec9', '#58a5ff'
+BLUE = ACCENT
 SOURCES = ('Микрофон', 'Звук компьютера')
 
 
 def button(parent, label, command):
-    return tk.Button(parent, text=label, command=command, bg=FIELD, fg=TEXT, activebackground='#36547c', activeforeground=TEXT, relief='flat', padx=10, pady=6, cursor='hand2')
+    return tk.Button(parent, text=label, command=command, bg=FIELD, fg=TEXT, activebackground=HOVER, activeforeground=TEXT, relief='flat', padx=10, pady=6, cursor='hand2')
 
 
 def listing(parent, **kwargs):
-    return tk.Listbox(parent, bg=CARD, fg=TEXT, selectbackground='#315887', selectforeground=TEXT,
-                      relief='flat', highlightthickness=0, exportselection=False, font=('Segoe UI', 10), **kwargs)
+    return tk.Listbox(parent, bg=CARD, fg=TEXT, selectbackground=ACCENT_SOFT, selectforeground=TEXT,
+                      relief='flat', highlightthickness=0, exportselection=False, font=('Segoe UI', 10), activestyle='none', **kwargs)
 
 
 class LibraryUI:
@@ -23,6 +25,7 @@ class LibraryUI:
         self.active_session = lambda: None
         self.loading = False
         self.save_job = None
+        self.rename_editor = None
         self.history_page = tk.Frame(tabs, bg=BG, padx=18, pady=16)
         self.notes_page = tk.Frame(tabs, bg=BG, padx=18, pady=16)
         tabs.add(self.history_page, text='История')
@@ -41,7 +44,7 @@ class LibraryUI:
         self.session_list.bind('<<ListboxSelect>>', self.show_session)
         button(left, 'Удалить сеанс', self.delete_session).pack(fill='x', pady=(8, 0))
         right = tk.Frame(page, bg=CARD); right.grid(row=1, column=1, sticky='nsew')
-        self.session_text = tk.Text(right, wrap='word', bg=CARD, fg=TEXT, selectbackground='#38547b', relief='flat', padx=16, pady=14, font=('Segoe UI', 11))
+        self.session_text = tk.Text(right, wrap='word', bg=CARD, fg=TEXT, selectbackground=SELECTION, selectforeground=TEXT, relief='flat', padx=16, pady=14, font=('Segoe UI', 11))
         scroll = ttk.Scrollbar(right, command=self.session_text.yview); self.session_text.configure(yscrollcommand=scroll.set)
         scroll.pack(side='right', fill='y'); self.session_text.pack(fill='both', expand=True)
         self.session_text.tag_configure('meta', foreground=MUTED, spacing1=10)
@@ -98,6 +101,8 @@ class LibraryUI:
         notes = tk.Frame(p, bg=BG); notes.grid(row=1, column=1, sticky='nsew', padx=(0, 10), pady=(10, 0))
         self.sort = ttk.Combobox(notes, values=('Сначала новые', 'По названию'), state='readonly', width=20, style='Dark.TCombobox'); self.sort.current(0); self.sort.pack(fill='x', pady=(0, 6)); self.sort.bind('<<ComboboxSelected>>', lambda e: self.refresh_notes())
         self.note_list = listing(notes, width=23); self.note_list.pack(fill='both', expand=True); self.note_list.bind('<<ListboxSelect>>', self.note_selected)
+        self.note_list.bind('<Button-3>', self.note_context_menu)
+        self.note_list.bind('<Double-Button-1>', self.note_double_click)
         button(notes, '+ Заметка', self.add_note).pack(fill='x', pady=(5, 0)); button(notes, 'Удалить заметку', self.delete_note).pack(fill='x', pady=(5, 0))
         editor = tk.Frame(p, bg=CARD, padx=12, pady=12); editor.grid(row=1, column=2, sticky='nsew', pady=(10, 0)); editor.columnconfigure(0, weight=1); editor.rowconfigure(2, weight=1)
         self.title = tk.Entry(editor, bg=FIELD, fg=TEXT, insertbackground=TEXT, relief='flat', font=('Segoe UI', 14, 'bold'))
@@ -105,15 +110,17 @@ class LibraryUI:
         move = tk.Frame(editor, bg=CARD); move.grid(row=1, column=0, sticky='ew', pady=(0, 8)); tk.Label(move, text='Папка:', bg=CARD, fg=MUTED).pack(side='left')
         self.move_folder = ttk.Combobox(move, state='readonly', style='Dark.TCombobox'); self.move_folder.pack(side='left', fill='x', expand=True, padx=(8, 0)); self.move_folder.bind('<<ComboboxSelected>>', self.changed)
         text_frame = tk.Frame(editor, bg=CARD); text_frame.grid(row=2, column=0, sticky='nsew')
-        self.body = tk.Text(text_frame, wrap='word', undo=True, bg=CARD, fg=TEXT, insertbackground=TEXT, selectbackground='#38547b', relief='flat', font=('Segoe UI', 11))
+        self.body = tk.Text(text_frame, wrap='word', undo=True, bg=CARD, fg=TEXT, insertbackground=TEXT, selectbackground=SELECTION, selectforeground=TEXT, relief='flat', font=('Segoe UI', 11))
         scroll = ttk.Scrollbar(text_frame, command=self.body.yview); self.body.configure(yscrollcommand=scroll.set); scroll.pack(side='right', fill='y'); self.body.pack(fill='both', expand=True)
         self.body.bind('<<Modified>>', self.body_changed)
+        self.body.bind('<Button-3>', self.editor_context_menu)
+        self.title.bind('<Button-3>', self.editor_context_menu)
         self.note_status = tk.StringVar(value='Выберите или создайте заметку')
         tk.Label(editor, textvariable=self.note_status, bg=CARD, fg=MUTED).grid(row=3, column=0, sticky='w', pady=(8, 0))
         self.enable_editor(False)
 
     def enable_editor(self, enabled):
-        state = 'normal' if enabled else 'disabled'; self.title.configure(state=state); self.body.configure(state=state); self.move_folder.configure(state='readonly' if enabled else 'disabled')
+        state = 'normal' if enabled else 'disabled'; self.title.configure(state=state, disabledbackground=FIELD, disabledforeground=MUTED); self.body.configure(state=state); self.move_folder.configure(state='readonly' if enabled else 'disabled')
 
     def selected_folder(self):
         sel = self.folder_list.curselection()
@@ -165,6 +172,138 @@ class LibraryUI:
         self.note_list.delete(0, 'end')
         for _, title, _, _ in rows: self.note_list.insert('end', title)
         if select in self.note_ids: self.note_list.selection_set(self.note_ids.index(select))
+
+    def note_at(self, event):
+        index = self.note_list.nearest(event.y)
+        bounds = self.note_list.bbox(index) if self.note_list.size() else None
+        if bounds and bounds[1] <= event.y < bounds[1] + bounds[3]:
+            return index
+        return None
+
+    def select_note_at(self, index):
+        note = self.note_ids[index]
+        if note != self.current_note:
+            if not self.save_current():
+                return False
+            self.refresh_notes(note)
+            self.show_note(note)
+        else:
+            self.note_list.selection_clear(0, 'end')
+            self.note_list.selection_set(index)
+        return True
+
+    def note_context_menu(self, event):
+        index = self.note_at(event)
+        menu = tk.Menu(self.note_list, tearoff=False)
+        if index is None:
+            menu.add_command(label='Добавить заметку', command=self.add_note)
+        elif self.select_note_at(index):
+            menu.add_command(label='Переименовать', command=self.rename_note_inline)
+            menu.add_command(label='Удалить', command=self.delete_note)
+        else:
+            return 'break'
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
+
+    def note_double_click(self, event):
+        index = self.note_at(event)
+        if index is not None and self.select_note_at(index):
+            self.rename_note_inline()
+        return 'break'
+
+    def rename_note_inline(self):
+        if self.current_note is None or not self.save_current():
+            return
+        selected = self.note_list.curselection()
+        if not selected:
+            return
+        index = selected[0]
+        self.note_list.see(index)
+        bounds = self.note_list.bbox(index)
+        if not bounds:
+            return
+        if self.rename_editor is not None:
+            self.finish_inline_rename(False)
+        x, y, width, height = bounds
+        editor = tk.Entry(self.note_list, bg=FIELD, fg=TEXT, insertbackground=TEXT, relief='solid', font=('Segoe UI', 10))
+        self.rename_editor = editor
+        editor.place(x=x, y=y, width=max(width, self.note_list.winfo_width() - x), height=max(height, 22))
+        editor.insert(0, self.note_list.get(index))
+        editor.select_range(0, 'end')
+        editor.bind('<Return>', lambda event: self.finish_inline_rename(True))
+        editor.bind('<Escape>', lambda event: self.finish_inline_rename(False))
+        editor.bind('<FocusOut>', lambda event: self.finish_inline_rename(True))
+        editor.focus_set()
+
+    def finish_inline_rename(self, save):
+        editor = self.rename_editor
+        if editor is None:
+            return 'break'
+        name = editor.get().strip()
+        self.rename_editor = None
+        editor.destroy()
+        if save and name and self.current_note is not None:
+            self.title.delete(0, 'end')
+            self.title.insert(0, name)
+            self.save_current()
+        return 'break'
+
+    def editor_context_menu(self, event):
+        widget = event.widget
+        if str(widget.cget('state')) == 'disabled':
+            return 'break'
+        menu = tk.Menu(widget, tearoff=False)
+        selected = bool(widget.tag_ranges('sel')) if isinstance(widget, tk.Text) else bool(widget.selection_present())
+        if not isinstance(widget, tk.Text) and not selected:
+            widget.icursor(widget.index(f'@{event.x}'))
+        if isinstance(widget, tk.Text):
+            point = widget.index(f'@{event.x},{event.y}')
+            if not selected:
+                widget.mark_set('insert', point)
+            line, column = map(int, point.split('.'))
+            text = widget.get(f'{line}.0', f'{line}.end')
+            for match in re.finditer(r"[^\W\d_]+(?:['’\-][^\W\d_]+)*", text, re.UNICODE):
+                if match.start() <= column < match.end():
+                    try:
+                        suggestions = spelling_suggestions(match.group())
+                    except (OSError, ValueError):
+                        suggestions = []
+                    for suggestion in suggestions:
+                        start = f'{line}.{match.start()}'
+                        end = f'{line}.{match.end()}'
+                        menu.add_command(label=suggestion, command=lambda value=suggestion, first=start, last=end: self.replace_word(first, last, value))
+                    if suggestions:
+                        menu.add_separator()
+                    break
+        menu.add_command(label='Вырезать', state='normal' if selected else 'disabled', command=lambda: self.editor_action(widget, '<<Cut>>'))
+        menu.add_command(label='Копировать', state='normal' if selected else 'disabled', command=lambda: self.editor_action(widget, '<<Copy>>'))
+        try:
+            widget.clipboard_get()
+            paste_state = 'normal'
+        except tk.TclError:
+            paste_state = 'disabled'
+        menu.add_command(label='Вставить', state=paste_state, command=lambda: self.editor_action(widget, '<<Paste>>'))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
+
+    def editor_action(self, widget, action):
+        widget.focus_set()
+        widget.event_generate(action)
+        if action in ('<<Cut>>', '<<Paste>>'):
+            widget.after_idle(self.changed)
+
+    def replace_word(self, start, end, replacement):
+        self.body.edit_separator()
+        self.body.delete(start, end)
+        self.body.insert(start, replacement)
+        self.body.edit_separator()
+        self.body.focus_set()
 
     def add_note(self):
         if not self.save_current(): return
