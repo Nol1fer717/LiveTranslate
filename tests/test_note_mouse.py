@@ -57,6 +57,23 @@ class NoteMouseTests(unittest.TestCase):
         with patch('library_ui.tk.Menu', FakeMenu): self.ui.note_context_menu(event)
         self.assertEqual([x['label'] for x in FakeMenu.created.items], ['Добавить заметку'])
 
+    def test_add_note_from_context_menu_creates_and_selects_it(self):
+        event = SimpleNamespace(y=self.ui.note_list.winfo_height()-2, x_root=0, y_root=0)
+        with patch('library_ui.tk.Menu', FakeMenu): self.ui.note_context_menu(event)
+        FakeMenu.created.items[0]['command']()
+        self.root.update()
+        self.assertEqual(len(self.ui.store.notes('all', 'Сначала новые')), 1)
+        self.assertIsNotNone(self.ui.current_note)
+        self.assertEqual(self.ui.title.get(), 'Новая заметка')
+
+    def test_add_folder_context_menu(self):
+        event = SimpleNamespace(x_root=0, y_root=0)
+        with patch('library_ui.tk.Menu', FakeMenu): self.ui.folder_context_menu(event)
+        with patch('library_ui.simpledialog.askstring', return_value='Новая папка'):
+            FakeMenu.created.items[0]['command']()
+            self.root.update()
+        self.assertEqual(self.ui.note_heading.get(), 'Новая папка')
+
     def test_rename_is_committed_when_editor_loses_focus(self):
         self.ui.add_note(); self.root.update()
         self.ui.rename_note_inline()

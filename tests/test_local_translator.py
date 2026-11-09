@@ -1,8 +1,24 @@
 import os, tempfile, time, tkinter as tk, unittest
 from unittest.mock import patch
+from types import SimpleNamespace
+from test_note_mouse import FakeMenu
 from app import App
 
 class LocalTranslatorTests(unittest.TestCase):
+ def test_context_menu_allows_paste_in_input_and_copy_in_output(self):
+  with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'LOCALAPPDATA':tmp,'LIVETRANSLATE_DOCUMENTS':os.path.join(tmp,'docs')}), patch('app.devices',return_value=([],[])):
+   root=tk.Tk(); root.withdraw(); app=App(root); ui=app.translator
+   ui.input.insert('1.0','hello'); ui.input.tag_add('sel','1.0','1.5')
+   with patch('translator_ui.tk.Menu',FakeMenu), patch.object(ui.input,'clipboard_get',return_value='paste'):
+    ui.context_menu(SimpleNamespace(widget=ui.input,x=0,y=0,x_root=0,y_root=0))
+   self.assertEqual([item['label'] for item in FakeMenu.created.items],['Вырезать','Копировать','Вставить'])
+   self.assertEqual([item['state'] for item in FakeMenu.created.items],['normal','normal','normal'])
+   ui.set_output('Привет'); ui.output.tag_add('sel','1.0','1.6')
+   with patch('translator_ui.tk.Menu',FakeMenu):
+    ui.context_menu(SimpleNamespace(widget=ui.output,x=0,y=0,x_root=0,y_root=0))
+   self.assertEqual([(item['label'],item['state']) for item in FakeMenu.created.items],[('Копировать','normal')])
+   app.finish_close()
+
  def test_automatic_translation_discards_outdated_result(self):
   class Model:
    def __init__(self, source, load_speech=True): pass

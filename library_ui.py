@@ -129,6 +129,7 @@ class LibraryUI:
         folder_scroll.pack(side='right', fill='y')
         self.folder_list.pack(fill='both', expand=True)
         self.folder_list.bind('<<ListboxSelect>>', self.folder_selected)
+        self.folder_list.bind('<Button-3>', self.folder_context_menu)
         folder_actions = tk.Frame(folders, bg=CARD, padx=8, pady=8)
         folder_actions.grid(row=2, column=0, sticky='ew')
         self.rename_folder_button = button(folder_actions, 'Переименовать', self.rename_folder)
@@ -238,6 +239,15 @@ class LibraryUI:
         self.update_folder_actions()
         self.current_note = None; self.refresh_notes(); self.show_note(None)
 
+    def folder_context_menu(self, event):
+        menu = tk.Menu(self.folder_list, tearoff=False)
+        menu.add_command(label='Добавить папку', command=lambda: self.notes_page.after_idle(self.add_folder))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
+
     def ask_folder(self, initial=''):
         name = simpledialog.askstring('Папка', 'Название папки:', initialvalue=initial, parent=self.notes_page)
         return name.strip() if name else ''
@@ -302,7 +312,7 @@ class LibraryUI:
         index = self.note_at(event)
         menu = tk.Menu(self.note_list, tearoff=False)
         if index is None:
-            menu.add_command(label='Добавить заметку', command=self.add_note)
+            menu.add_command(label='Добавить заметку', command=lambda: self.notes_page.after_idle(self.add_note))
         elif self.select_note_at(index):
             menu.add_command(label='Переименовать', command=self.rename_note_inline)
             menu.add_command(label='Удалить', command=self.delete_note)

@@ -21,6 +21,8 @@ class TranslatorUI:
         self.direction.current(0); self.direction.pack(side='left'); self.direction.bind('<<ComboboxSelected>>', self.changed)
         self.input = self.text_panel(0, 'Исходный текст'); self.output = self.text_panel(1, 'Перевод'); self.output.configure(state='disabled')
         self.input.bind('<<Modified>>', self.modified)
+        self.input.bind('<Button-3>', self.context_menu)
+        self.output.bind('<Button-3>', self.context_menu)
         self.status = tk.StringVar(value='Введите текст — перевод появится автоматически')
         tk.Label(self.page, textvariable=self.status, bg=BG, fg=MUTED, anchor='w').grid(row=4, column=0, columnspan=2, sticky='ew', pady=(10, 0))
         self.requests = queue.Queue(maxsize=1); self.results = queue.SimpleQueue()
@@ -35,6 +37,35 @@ class TranslatorUI:
         widget = tk.Text(pane, wrap='word', bg=CARD, fg=TEXT, insertbackground=TEXT, selectbackground=SELECTION, selectforeground=TEXT, relief='flat', font=('Segoe UI',12), undo=True)
         widget.grid(row=1,column=0,sticky='nsew'); scroll=ttk.Scrollbar(pane,command=widget.yview,style='Vertical.TScrollbar'); scroll.grid(row=1,column=1,sticky='ns'); widget.configure(yscrollcommand=scroll.set)
         return widget
+
+    def context_menu(self, event):
+        widget = event.widget
+        editable = widget is self.input
+        selected = bool(widget.tag_ranges('sel'))
+        if editable and not selected:
+            widget.mark_set('insert', f'@{event.x},{event.y}')
+        menu = tk.Menu(widget, tearoff=False)
+        if editable:
+            menu.add_command(label='Вырезать', state='normal' if selected else 'disabled',
+                             command=lambda: self.clipboard_action(widget, '<<Cut>>'))
+        menu.add_command(label='Копировать', state='normal' if selected else 'disabled',
+                         command=lambda: self.clipboard_action(widget, '<<Copy>>'))
+        if editable:
+            try:
+                widget.clipboard_get(); paste_state = 'normal'
+            except tk.TclError:
+                paste_state = 'disabled'
+            menu.add_command(label='Вставить', state=paste_state,
+                             command=lambda: self.clipboard_action(widget, '<<Paste>>'))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return 'break'
+
+    def clipboard_action(self, widget, action):
+        widget.focus_set()
+        widget.event_generate(action)
 
     def modified(self, event=None):
         if self.input.edit_modified():
