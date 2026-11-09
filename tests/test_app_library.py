@@ -8,7 +8,7 @@ from app import App
 
 class AppLibraryTests(unittest.TestCase):
     def test_session_events_and_notes_are_saved_on_close(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'LOCALAPPDATA': directory}), patch('app.devices', return_value=([{'name':'Test microphone'}], [{'name':'Test output'}])):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'LOCALAPPDATA': directory, 'LIVETRANSLATE_DOCUMENTS': os.path.join(directory, 'Documents')}), patch('app.devices', return_value=([{'name':'Test microphone'}], [{'name':'Test output'}])):
             root = tk.Tk(); root.withdraw(); app = App(root)
             def session(selected, folder, stop, detect):
                 app.events.put(('line', 0, ('Hello', 'Привет', None, 'EN → RU')))
@@ -30,7 +30,7 @@ class AppLibraryTests(unittest.TestCase):
             note_id = app.library.current_note
             app.finish_close()
             from storage import Storage
-            saved = Storage(os.path.join(directory, 'LiveTranslate', 'library.sqlite3'))
+            saved = Storage(os.path.join(directory, 'Documents', 'LiveTranslate', 'library.sqlite3'))
             self.assertEqual(saved.note(note_id)[:2], ('Greetings', 'Hello — Привет'))
             self.assertIsNotNone(saved.sessions()[0][2]); saved.close()
 

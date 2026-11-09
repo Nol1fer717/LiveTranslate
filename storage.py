@@ -1,8 +1,8 @@
 """Local persistence for translation sessions and personal notes."""
-import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from user_data import data_directory, legacy_directory, migrate_user_data
 
 
 def timestamp():
@@ -11,7 +11,15 @@ def timestamp():
 
 class Storage:
     def __init__(self, path=None):
-        self.path = Path(path) if path else Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'LiveTranslate' / 'library.sqlite3'
+        self.legacy_conflict = False
+        if path is None:
+            destination = data_directory()
+            self.legacy_conflict = ((destination / 'library.sqlite3').exists()
+                                    and (legacy_directory() / 'library.sqlite3').exists()
+                                    and not (destination / '.migration-from-appdata-complete').exists())
+            self.path = migrate_user_data() / 'library.sqlite3'
+        else:
+            self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path)
         self.db.execute('PRAGMA foreign_keys = ON')

@@ -13,6 +13,7 @@ from engine import DATA, GermanTranslation, Language, SPEAKER_PATH, capture, dev
 from whisper_stream import load_whisper
 from storage import Storage
 from library_ui import LibraryUI
+from user_data import data_directory
 
 SOURCES = ("Микрофон", "Звук компьютера")
 DIRECTIONS = ("Автоопределение", "Русский → Английский", "Английский → Русский")
@@ -144,6 +145,8 @@ class App:
         self.history.tag_configure("placeholder", foreground=MUTED, font=("Segoe UI", 11))
 
         self.storage = Storage()
+        if self.storage.legacy_conflict:
+            messagebox.showwarning("История и заметки", "В «Документах» уже есть своя база. Она сохранена без изменений; старая база в AppData тоже сохранена, но автоматически с ней не объединена.", parent=root)
         self.library = LibraryUI(tabs, self.storage)
         tabs.bind("<<NotebookTabChanged>>", lambda event: self.library.refresh_history() if tabs.select() == str(self.library.history_page) else None)
         self.session_id = None
@@ -266,7 +269,7 @@ class App:
                              ("auto", "ru", "en")[self.direction.current()]))
         folder = None
         if self.save.get():
-            folder = Path(os.environ["LOCALAPPDATA"]) / "LiveTranslate" / "Recordings" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            folder = data_directory() / "Recordings" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             try:
                 folder.mkdir(parents=True)
             except OSError as exc:
