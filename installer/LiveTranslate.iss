@@ -8,11 +8,11 @@
 [Setup]
 AppId={{C1AD0775-5F30-4C86-9D6B-708E44F090A2}
 AppName=LiveTranslate
-AppVersion=1.1.0
+AppVersion=1.2.0
 AppPublisher=LiveTranslate
-DefaultDirName={localappdata}\Programs\LiveTranslate
+DefaultDirName={autopf}\LiveTranslate
 DefaultGroupName=LiveTranslate
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
@@ -58,6 +58,11 @@ Name: "{autoprograms}\LiveTranslate"; Filename: "{app}\LiveTranslate.exe"
 [Run]
 Filename: "{app}\LiveTranslate.exe"; Description: "Запустить LiveTranslate"; Flags: nowait postinstall skipifsilent
 
-[UninstallDelete]
-Type: filesandordirs; Name: "{localappdata}\LiveTranslate\Recordings"
-Type: dirifempty; Name: "{localappdata}\LiveTranslate"
+[Code]
+function InitializeSetup(): Boolean;
+var OldPath: String;
+begin
+  Result := True;
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{C1AD0775-5F30-4C86-9D6B-708E44F090A2}_is1', 'InstallLocation', OldPath) then
+    MsgBox('Обнаружена версия, установленная для текущего пользователя. Новая версия будет установлена в Program Files. Прежняя версия останется на месте; ваши личные данные будут скопированы в папку «Документы\LiveTranslate» при запуске новой версии.', mbInformation, MB_OK);
+end;

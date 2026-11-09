@@ -11,13 +11,17 @@ from vosk import SpkModel
 
 from engine import DATA, GermanTranslation, Language, SPEAKER_PATH, capture, devices
 from whisper_stream import load_whisper
+from storage import Storage
+from library_ui import LibraryUI
+from user_data import data_directory
+from rounded_button import RoundedButton
+from theme import BG, CARD, FIELD, TEXT, MUTED, ACCENT, ACCENT_DARK, ACCENT_SOFT, BORDER, HOVER, SELECTION
 
 SOURCES = ("Микрофон", "Звук компьютера")
 DIRECTIONS = ("Автоопределение", "Русский → Английский", "Английский → Русский")
 MODES = ("Микрофон", "Звук компьютера", "Микрофон + компьютер")
 VIEWS = ("Оба", "Транскрипция", "Перевод")
-BG, CARD, FIELD = "#111c30", "#1b2941", "#253550"
-TEXT, MUTED, BLUE, PURPLE = "#f1f5ff", "#9caec9", "#58a5ff", "#ba91ff"
+BLUE, PURPLE = ACCENT, ACCENT_DARK
 
 
 class App:
@@ -28,31 +32,41 @@ class App:
         root.minsize(760, 600)
         root.configure(bg=BG)
         root.columnconfigure(0, weight=1)
-        root.rowconfigure(0, weight=1)
+        root.rowconfigure(2, weight=1)
         style = ttk.Style(root)
         style.theme_use("clam")
         style.configure("Dark.TCombobox", fieldbackground=FIELD, background=FIELD,
-                        foreground=TEXT, arrowcolor=TEXT, padding=6)
+                        foreground=TEXT, arrowcolor=MUTED, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=8)
         style.map("Dark.TCombobox", fieldbackground=[("readonly", FIELD)],
                   foreground=[("readonly", TEXT)])
-        style.configure("Vertical.TScrollbar", background=FIELD, troughcolor=CARD, bordercolor=CARD,
+        style.configure("Vertical.TScrollbar", background=BORDER, troughcolor=CARD, bordercolor=CARD,
                         arrowcolor=MUTED)
 
-        page = tk.Frame(root, bg=BG, padx=28, pady=24)
-        page.grid(sticky="nsew")
+        masthead = tk.Frame(root, bg=CARD, padx=28, pady=14, highlightbackground=BORDER, highlightthickness=1)
+        masthead.grid(row=0, column=0, sticky="ew")
+        tk.Label(masthead, text="LiveTranslate", bg=CARD, fg=TEXT, font=("Segoe UI", 17, "bold")).pack(side="left")
+        tk.Label(masthead, text="Перевод и изучение языков", bg=CARD, fg=MUTED, font=("Segoe UI", 10)).pack(side="left", padx=(16, 0))
+        style.configure("Modern.TNotebook", background=BG, borderwidth=0)
+        style.layout("Modern.TNotebook.Tab", [])
+        navigation = tk.Frame(root, bg=BG, padx=24, pady=8)
+        navigation.grid(row=1, column=0, sticky="ew")
+        tabs = ttk.Notebook(root, style="Modern.TNotebook")
+        tabs.grid(row=2, column=0, sticky="nsew")
+        page = tk.Frame(tabs, bg=BG, padx=28, pady=20)
+        tabs.add(page, text="Перевод")
         page.columnconfigure(0, weight=1)
         page.rowconfigure(4, weight=1)
 
         header = tk.Frame(page, bg=BG)
         header.grid(row=0, sticky="ew", pady=(0, 20))
-        tk.Label(header, text="LiveTranslate", bg=BG, fg=TEXT,
-                 font=("Segoe UI", 24, "bold")).pack(side="left")
+        tk.Label(header, text="Перевод", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 19, "bold")).pack(side="left")
         self.status = tk.StringVar(value="Выберите источник и начните перевод")
         tk.Label(header, textvariable=self.status, bg=BG, fg=MUTED,
                  font=("Segoe UI", 10), anchor="e").pack(side="right", fill="x", expand=True, padx=(18, 0))
 
         controls = tk.Frame(page, bg=CARD, padx=18, pady=16, highlightthickness=1,
-                            highlightbackground="#364b6a")
+                            highlightbackground=BORDER)
         controls.grid(row=1, sticky="ew", pady=(0, 18))
         controls.columnconfigure(0, weight=1)
 
@@ -62,8 +76,8 @@ class App:
         self.direction = ttk.Combobox(top, values=DIRECTIONS, state="readonly", width=25, style="Dark.TCombobox")
         self.direction.current(0)
         self.direction.pack(side="left")
-        self.start = tk.Button(top, text="Начать перевод", command=self.toggle, bg="#367df2", fg="white",
-                               activebackground="#2a65c6", activeforeground="white", relief="flat",
+        self.start = RoundedButton(top, text="Начать перевод", command=self.toggle, bg=ACCENT, fg="white",
+                               activebackground=ACCENT_DARK, activeforeground="white", relief="flat",
                                padx=20, pady=8, cursor="hand2", font=("Segoe UI", 10, "bold"))
         self.start.pack(side="right")
 
@@ -72,7 +86,7 @@ class App:
         mode_bar = tk.Frame(controls, bg=CARD)
         mode_bar.grid(row=1, sticky="ew", pady=(16, 6))
         for label in MODES:
-            button = tk.Button(mode_bar, text=label, command=lambda value=label: self.set_mode(value),
+            button = RoundedButton(mode_bar, text=label, command=lambda value=label: self.set_mode(value),
                                relief="flat", padx=14, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"))
             button.pack(side="left", padx=(0, 6))
             self.mode_buttons.append(button)
@@ -104,7 +118,7 @@ class App:
                                     bg=CARD, fg=TEXT, selectcolor=FIELD, activebackground=CARD,
                                     activeforeground=TEXT, highlightthickness=0)
         self.check.pack(side="left", padx=(18, 0))
-        self.refresh = tk.Button(options, text="Обновить устройства", command=self.scan, bg=CARD, fg=BLUE,
+        self.refresh = RoundedButton(options, text="Обновить устройства", command=self.scan, bg=CARD, fg=BLUE,
                                  activebackground=FIELD, activeforeground=TEXT, relief="flat", cursor="hand2")
         self.refresh.pack(side="right")
 
@@ -113,17 +127,17 @@ class App:
         self.view = tk.StringVar(value=VIEWS[0])
         self.view_buttons = []
         for label in VIEWS:
-            button = tk.Button(view_bar, text=label, command=lambda value=label: self.set_view(value),
+            button = RoundedButton(view_bar, text=label, command=lambda value=label: self.set_view(value),
                                relief="flat", padx=16, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"))
             button.pack(side="left", padx=(0, 4))
             self.view_buttons.append(button)
 
-        results = tk.Frame(page, bg=CARD, highlightthickness=1, highlightbackground="#364b6a")
+        results = tk.Frame(page, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
         results.grid(row=4, sticky="nsew")
         results.rowconfigure(0, weight=1)
         results.columnconfigure(0, weight=1)
         self.history = tk.Text(results, wrap="word", bg=CARD, fg=TEXT, insertbackground=TEXT,
-                               selectbackground="#38547b", relief="flat", padx=20, pady=18,
+                               selectbackground=SELECTION, selectforeground=TEXT, relief="flat", padx=20, pady=18,
                                font=("Segoe UI", 12), state="disabled", cursor="arrow")
         self.history.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(results, orient="vertical", command=self.history.yview, style="Vertical.TScrollbar")
@@ -132,10 +146,34 @@ class App:
         self.history.tag_configure("meta", foreground=MUTED, font=("Segoe UI", 9), spacing1=12, spacing3=6)
         self.history.tag_configure("source_label", foreground=BLUE, font=("Segoe UI", 10, "bold"))
         self.history.tag_configure("target_label", foreground=PURPLE, font=("Segoe UI", 10, "bold"))
-        self.history.tag_configure("source", foreground="#d6e2f5", font=("Segoe UI", 12), spacing3=6)
+        self.history.tag_configure("source", foreground=MUTED, font=("Segoe UI", 12), spacing3=6)
         self.history.tag_configure("target", foreground=TEXT, font=("Segoe UI", 13), spacing3=12)
         self.history.tag_configure("placeholder", foreground=MUTED, font=("Segoe UI", 11))
 
+        self.storage = Storage()
+        if self.storage.legacy_conflict:
+            messagebox.showwarning("История и заметки", "В «Документах» уже есть своя база. Она сохранена без изменений; старая база в AppData тоже сохранена, но автоматически с ней не объединена.", parent=root)
+        self.library = LibraryUI(tabs, self.storage)
+        nav_buttons = []
+        for label, target in (("Перевод", page), ("История", self.library.history_page), ("Заметки", self.library.notes_page)):
+            control = RoundedButton(navigation, text=label, command=lambda selected=target: tabs.select(selected),
+                                relief="flat", padx=18, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"),
+                                activebackground=HOVER, activeforeground=ACCENT)
+            control.pack(side="left", padx=(0, 6))
+            nav_buttons.append((control, target))
+
+        def update_navigation(event=None):
+            current = tabs.select()
+            for control, target in nav_buttons:
+                active = current == str(target)
+                control.configure(bg=ACCENT_SOFT if active else BG, fg=ACCENT if active else MUTED)
+            if current == str(self.library.history_page):
+                self.library.refresh_history()
+
+        tabs.bind("<<NotebookTabChanged>>", update_navigation)
+        update_navigation()
+        self.session_id = None
+        self.library.active_session = lambda: self.session_id
         self.events = queue.SimpleQueue()
         self.entries = []
         self.previews = {}
@@ -150,14 +188,15 @@ class App:
         self.set_mode(self.mode.get())
         self.set_view(self.view.get())
         root.protocol("WM_DELETE_WINDOW", self.close)
+        self.poll_job = None
         self.poll()
 
     def set_mode(self, mode):
         self.mode.set(mode)
         for button, label in zip(self.mode_buttons, MODES):
             selected = label == mode
-            button.configure(bg="#294d80" if selected else CARD, fg=BLUE if selected else "#cfdaeb",
-                             activebackground="#294d80", activeforeground=TEXT)
+            button.configure(bg=ACCENT_SOFT if selected else CARD, fg=ACCENT if selected else TEXT,
+                             activebackground=HOVER, activeforeground=TEXT)
         self.update_devices()
 
     def update_devices(self):
@@ -169,9 +208,9 @@ class App:
     def set_view(self, view):
         self.view.set(view)
         for button, label in zip(self.view_buttons, VIEWS):
-            button.configure(bg="#284a7a" if label == view else "#1b2941",
-                             fg=BLUE if label == view else "#cfdaeb",
-                             activebackground="#284a7a", activeforeground=TEXT)
+            button.configure(bg=ACCENT_SOFT if label == view else BG,
+                             fg=ACCENT if label == view else MUTED,
+                             activebackground=HOVER, activeforeground=TEXT)
         self.render()
         self.render_preview()
 
@@ -188,6 +227,9 @@ class App:
             self.status.set(f"Не удалось получить устройства: {exc}")
 
     def render(self):
+        selected = self.history.tag_ranges("sel")
+        selected_text = self.history.get("sel.first", "sel.last") if selected else None
+        scroll = self.history.yview()[0] if selected else None
         self.history.configure(state="normal")
         self.history.delete("1.0", "end")
         if not self.entries and not any(self.previews.values()) and not any(self.partials.values()):
@@ -222,7 +264,13 @@ class App:
                 if partial and not self.previews.get(index):
                     self.history.insert("end", f"{SOURCES[index]} · Распознавание\n", "meta")
                     self.history.insert("end", partial + "\n", "source")
-        self.history.see("end")
+        if selected_text:
+            match = self.history.search(selected_text, "1.0", stopindex="end", exact=True)
+            if match:
+                self.history.tag_add("sel", match, f"{match}+{len(selected_text)}c")
+                self.history.yview_moveto(scroll)
+        else:
+            self.history.see("end")
         self.history.configure(state="disabled")
 
     def render_preview(self):
@@ -245,12 +293,17 @@ class App:
                              ("auto", "ru", "en")[self.direction.current()]))
         folder = None
         if self.save.get():
-            folder = Path(os.environ["LOCALAPPDATA"]) / "LiveTranslate" / "Recordings" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            folder = data_directory() / "Recordings" / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
             try:
                 folder.mkdir(parents=True)
             except OSError as exc:
                 messagebox.showerror("Запись", str(exc))
                 return
+        try:
+            self.session_id = self.storage.start_session(self.mode.get())
+        except Exception as exc:
+            messagebox.showerror("История", f"Не удалось начать сохранение сеанса: {exc}")
+            return
         if self.entries:
             self.entries.append({"session": "Новый сеанс · " + datetime.now().strftime("%H:%M")})
             self.render()
@@ -335,9 +388,16 @@ class App:
                     source_lang, target_lang = (part.strip() for part in direction.split("→", 1))
                 else:
                     source_lang, target_lang = (("RU", "EN") if self.direction.current() == 1 else ("EN", "RU"))
-                self.entries.append({"time": datetime.now().strftime("%H:%M:%S"), "index": index,
-                                     "speaker": speaker, "from": source_lang, "to": target_lang,
-                                     "source": source, "target": target})
+                entry = {"time": datetime.now().strftime("%H:%M:%S"), "index": index,
+                         "speaker": speaker, "from": source_lang, "to": target_lang,
+                         "source": source, "target": target}
+                self.entries.append(entry)
+                if self.session_id is not None:
+                    try:
+                        self.storage.add_phrase(self.session_id, entry)
+                    except Exception as exc:
+                        self.failure = f"Не удалось сохранить фразу в историю: {exc}"
+                        self.stop.set()
                 self.render()
             elif kind == "ready":
                 self.ready += 1
@@ -349,9 +409,17 @@ class App:
                 self.failure = f"{SOURCES[index] if index is not None else 'Модели'}: {value}"
             elif kind == "done":
                 self.stop = None
+                if self.session_id is not None:
+                    try:
+                        self.storage.end_session(self.session_id)
+                    except Exception as exc:
+                        self.failure = f"Не удалось завершить сохранение истории: {exc}"
+                    self.session_id = None
                 if self.closing:
-                    self.root.destroy()
-                    return
+                    if self.failure:
+                        messagebox.showerror("Сохранение", self.failure)
+                    if self.finish_close():
+                        return
                 self.previews.clear()
                 self.partials.clear()
                 self.render_preview()
@@ -363,11 +431,23 @@ class App:
                 self.update_devices()
                 self.start.configure(text="Начать перевод", state="normal")
                 self.status.set(self.failure or (f"Записи: {self.folder}" if self.folder else "Перевод остановлен"))
-        self.root.after(75, self.poll)
+        self.poll_job = self.root.after(75, self.poll)
+
+    def finish_close(self):
+        self.library.finish_inline_rename(True)
+        if not self.library.save_current():
+            self.closing = False
+            return False
+        self.storage.close()
+        if self.poll_job is not None:
+            self.root.after_cancel(self.poll_job)
+            self.poll_job = None
+        self.root.destroy()
+        return True
 
     def close(self):
         if self.stop is None:
-            self.root.destroy()
+            self.finish_close()
         else:
             self.closing = True
             self.stop.set()

@@ -1,0 +1,12 @@
+"""Shared visual tokens for LiveTranslate's desktop interface."""
+BG = '#f3f6f3'
+CARD = '#ffffff'
+FIELD = '#edf3ef'
+TEXT = '#182e27'
+MUTED = '#526960'
+ACCENT = '#126e59'
+ACCENT_DARK = '#0c5747'
+ACCENT_SOFT = '#deeee7'
+BORDER = '#d9e4dd'
+HOVER = '#e7f0ea'
+SELECTION = '#c4e4d6'
