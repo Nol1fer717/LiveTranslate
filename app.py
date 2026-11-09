@@ -14,6 +14,7 @@ from whisper_stream import load_whisper
 from storage import Storage
 from library_ui import LibraryUI
 from user_data import data_directory
+from rounded_button import RoundedButton
 from theme import BG, CARD, FIELD, TEXT, MUTED, ACCENT, ACCENT_DARK, ACCENT_SOFT, BORDER, HOVER, SELECTION
 
 SOURCES = ("Микрофон", "Звук компьютера")
@@ -75,7 +76,7 @@ class App:
         self.direction = ttk.Combobox(top, values=DIRECTIONS, state="readonly", width=25, style="Dark.TCombobox")
         self.direction.current(0)
         self.direction.pack(side="left")
-        self.start = tk.Button(top, text="Начать перевод", command=self.toggle, bg=ACCENT, fg="white",
+        self.start = RoundedButton(top, text="Начать перевод", command=self.toggle, bg=ACCENT, fg="white",
                                activebackground=ACCENT_DARK, activeforeground="white", relief="flat",
                                padx=20, pady=8, cursor="hand2", font=("Segoe UI", 10, "bold"))
         self.start.pack(side="right")
@@ -85,7 +86,7 @@ class App:
         mode_bar = tk.Frame(controls, bg=CARD)
         mode_bar.grid(row=1, sticky="ew", pady=(16, 6))
         for label in MODES:
-            button = tk.Button(mode_bar, text=label, command=lambda value=label: self.set_mode(value),
+            button = RoundedButton(mode_bar, text=label, command=lambda value=label: self.set_mode(value),
                                relief="flat", padx=14, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"))
             button.pack(side="left", padx=(0, 6))
             self.mode_buttons.append(button)
@@ -117,7 +118,7 @@ class App:
                                     bg=CARD, fg=TEXT, selectcolor=FIELD, activebackground=CARD,
                                     activeforeground=TEXT, highlightthickness=0)
         self.check.pack(side="left", padx=(18, 0))
-        self.refresh = tk.Button(options, text="Обновить устройства", command=self.scan, bg=CARD, fg=BLUE,
+        self.refresh = RoundedButton(options, text="Обновить устройства", command=self.scan, bg=CARD, fg=BLUE,
                                  activebackground=FIELD, activeforeground=TEXT, relief="flat", cursor="hand2")
         self.refresh.pack(side="right")
 
@@ -126,7 +127,7 @@ class App:
         self.view = tk.StringVar(value=VIEWS[0])
         self.view_buttons = []
         for label in VIEWS:
-            button = tk.Button(view_bar, text=label, command=lambda value=label: self.set_view(value),
+            button = RoundedButton(view_bar, text=label, command=lambda value=label: self.set_view(value),
                                relief="flat", padx=16, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"))
             button.pack(side="left", padx=(0, 4))
             self.view_buttons.append(button)
@@ -155,7 +156,7 @@ class App:
         self.library = LibraryUI(tabs, self.storage)
         nav_buttons = []
         for label, target in (("Перевод", page), ("История", self.library.history_page), ("Заметки", self.library.notes_page)):
-            control = tk.Button(navigation, text=label, command=lambda selected=target: tabs.select(selected),
+            control = RoundedButton(navigation, text=label, command=lambda selected=target: tabs.select(selected),
                                 relief="flat", padx=18, pady=7, cursor="hand2", font=("Segoe UI", 10, "bold"),
                                 activebackground=HOVER, activeforeground=ACCENT)
             control.pack(side="left", padx=(0, 6))

@@ -3,6 +3,7 @@ import sqlite3
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from windows_spelling import suggestions as spelling_suggestions
+from rounded_button import RoundedButton
 from theme import BG, CARD, FIELD, TEXT, MUTED, ACCENT, ACCENT_DARK, ACCENT_SOFT, BORDER, HOVER, SELECTION
 
 BLUE = ACCENT
@@ -10,7 +11,7 @@ SOURCES = ('Микрофон', 'Звук компьютера')
 
 
 def button(parent, label, command):
-    return tk.Button(parent, text=label, command=command, bg=FIELD, fg=TEXT, activebackground=HOVER, activeforeground=TEXT, relief='flat', padx=10, pady=6, cursor='hand2')
+    return RoundedButton(parent, text=label, command=command, bg=FIELD, fg=TEXT, activebackground=HOVER, activeforeground=TEXT, relief='flat', padx=10, pady=6, cursor='hand2')
 
 
 def listing(parent, **kwargs):
