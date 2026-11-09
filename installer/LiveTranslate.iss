@@ -32,7 +32,7 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "german"; Description: "Немецкий язык: перевод на русский (загрузка около 300 МБ)"; Flags: unchecked
+Name: "german"; Description: "Немецкий язык: перевод в обе стороны (загрузка около 450 МБ)"; Flags: unchecked
 Name: "speakers"; Description: "Различать голоса собеседников (загрузка около 14 МБ)"; Flags: unchecked
 Name: "nvidia"; Description: "Ускорение NVIDIA (загрузка около 1,3 ГБ; нужен интернет)"; Flags: unchecked
 
@@ -47,6 +47,7 @@ Source: "{tmp}\downloads\translate-en_ru-1_9.zip"; DestDir: "{app}\data"; Extern
 Source: "{tmp}\downloads\translate-ru_en-1_9.zip"; DestDir: "{app}\data"; ExternalSize: 174000000; Hash: "e9ba8bf722d10a4a4c39f74289d5938fd47eac08dbe4ed0afd22d89445a5c3ac"; Check: HasDownload('translate-ru_en-1_9.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\vosk-model-small-en-us-0.15.zip"; DestDir: "{app}\data"; ExternalSize: 71000000; Hash: "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"; Check: HasDownload('vosk-model-small-en-us-0.15.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\vosk-model-small-ru-0.22.zip"; DestDir: "{app}\data"; ExternalSize: 92000000; Hash: "961d5ff98a17f4aa6de69864d0aa71fa5bac682301d2b5d17a3f24c5c99a46d4"; Check: HasDownload('vosk-model-small-ru-0.22.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
+Source: "{tmp}\downloads\translate-en_de-1_3.zip"; DestDir: "{app}\data"; ExternalSize: 164904507; Hash: "6cd847f0c06c9c66013e6b0932e07fd54a6d90894659c02bf6c5247b72fb25b1"; Tasks: german; Check: HasDownload('translate-en_de-1_3.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\translate-de_en-1_9.zip"; DestDir: "{app}\data"; ExternalSize: 317000000; Hash: "4de45bb5801c25cf7d776c075c8eb71fac0667d5c9164c0dd9a38b06eaa5f20e"; Tasks: german; Check: HasDownload('translate-de_en-1_9.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\vosk-model-spk-0.4.zip"; DestDir: "{app}\data"; ExternalSize: 15000000; Hash: "a74d8f51144484813e16af689bb0f916b7a111e2347f467c4933c1166097b5a7"; Tasks: speakers; Check: HasDownload('vosk-model-spk-0.4.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\cublas.zip"; DestDir: "{app}\_internal"; ExternalSize: 1200000000; Hash: "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661"; Tasks: nvidia; Check: HasDownload('cublas.zip'); Flags: external extractarchive ignoreversion recursesubdirs createallsubdirs

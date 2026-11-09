@@ -42,7 +42,8 @@ def download(package, output, cancelled, notify):
             raise InterruptedError('Загрузка отменена')
         try:
             digest = hashlib.sha256()
-            request = Request(package['url'], headers={'User-Agent': 'LiveTranslate-Installer/1.3'})
+            agent = 'Mozilla/5.0' if package['name'] == 'translate-en_de-1_3.zip' else 'LiveTranslate-Installer/1.3'
+            request = Request(package['url'], headers={'User-Agent': agent})
             with urlopen(request, timeout=30) as response, temporary.open('wb') as target:
                 while data := response.read(CHUNK):
                     if cancelled.is_set():

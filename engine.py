@@ -58,6 +58,20 @@ class Language:
         return self.tokens.decode(result.hypotheses[0]).strip()
 
 
+class EnglishToGerman:
+    def __init__(self, russian):
+        folder = DATA / "translate-en_de-1_3"
+        self.tokens = sentencepiece.SentencePieceProcessor(model_proto=(folder / "sentencepiece.model").read_bytes())
+        self.translator = ctranslate2.Translator(str(folder / "model"), device="cpu", compute_type="auto", intra_threads=2)
+        self.russian = russian
+
+    def translate(self, text):
+        english = self.russian.translate(text)
+        pieces = self.tokens.encode(english, out_type=str)
+        result = self.translator.translate_batch([pieces], beam_size=3)[0]
+        return self.tokens.decode(result.hypotheses[0]).strip()
+
+
 class GermanTranslation:
     def __init__(self, english):
         folder = DATA / "translate-de_en-1_9"

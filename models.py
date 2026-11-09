@@ -3,7 +3,7 @@ import hashlib
 import shutil
 from pathlib import Path
 import tempfile
-from urllib.request import urlretrieve
+from urllib.request import Request, urlopen
 from zipfile import ZipFile
 from huggingface_hub import hf_hub_download
 
@@ -16,6 +16,8 @@ WHISPER_FILES = {
     "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
 }
 ARCHIVES = {
+    "https://argos-net.com/v1/translate-en_de-1_3.argosmodel":
+        "6cd847f0c06c9c66013e6b0932e07fd54a6d90894659c02bf6c5247b72fb25b1",
     "https://argos-net.com/v1/translate-de_en-1_9.argosmodel":
         "4de45bb5801c25cf7d776c075c8eb71fac0667d5c9164c0dd9a38b06eaa5f20e",
     "https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip":
@@ -40,7 +42,8 @@ def install():
         print(f"Загрузка {folder}…", flush=True)
         with tempfile.TemporaryDirectory(dir=DATA) as scratch:
             archive = Path(scratch) / "package.zip"
-            urlretrieve(url, archive)
+            with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=60) as response, archive.open("wb") as target:
+                shutil.copyfileobj(response, target)
             with archive.open("rb") as source:
                 if hashlib.file_digest(source, "sha256").hexdigest() != expected:
                     raise ValueError(f"Контрольная сумма {folder} не совпадает")

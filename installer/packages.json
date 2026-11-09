@@ -410,5 +410,45 @@
         "sha256": "0cc63349fedffeec1660b30955e8028b6e4e4c26cf1e41c56dc4569fd5eca82c"
       }
     ]
+  },
+  {
+    "url": "https://argos-net.com/v1/translate-en_de-1_3.argosmodel",
+    "name": "translate-en_de-1_3.zip",
+    "sha256": "6cd847f0c06c9c66013e6b0932e07fd54a6d90894659c02bf6c5247b72fb25b1",
+    "task": "german",
+    "files": [
+      {
+        "path": "data/translate-en_de-1_3/metadata.json",
+        "sha256": "81bee3a6a246a8ba9e7152145a8bb1138a57b8d65faa6b7b1601ada504cbe156"
+      },
+      {
+        "path": "data/translate-en_de-1_3/model/config.json",
+        "sha256": "93f2c28a9b8720a6fbe874e1a7c43ab9530042b42a96804330b46b861a0ece86"
+      },
+      {
+        "path": "data/translate-en_de-1_3/model/model.bin",
+        "sha256": "c29ca0fe955386c79197d0fce05b9cec0fa68953e41254a27ca654ee0dfb175a"
+      },
+      {
+        "path": "data/translate-en_de-1_3/model/shared_vocabulary.json",
+        "sha256": "05f4151e7239323d23b5f327e68872baade2f3e7e7af1780bf3a44c7a77b408b"
+      },
+      {
+        "path": "data/translate-en_de-1_3/README.md",
+        "sha256": "7b67b6985b4251717ffef4683159e6930ccfebff696f4fe71fa22012e1576a12"
+      },
+      {
+        "path": "data/translate-en_de-1_3/sentencepiece.model",
+        "sha256": "4938b124d8e488744fd4c58e6f7b665294739f4c6aca15a078689a1afb58ed4e"
+      },
+      {
+        "path": "data/translate-en_de-1_3/stanza/en/tokenize/ewt.pt",
+        "sha256": "7bc5a1523f4e60107640ea44d2cb27c787bc339ba0c93be6c7dbf744d5635cd6"
+      },
+      {
+        "path": "data/translate-en_de-1_3/stanza/resources.json",
+        "sha256": "39faaee80e6cca9e211dcda8fb3da4f9c024dcff5b4bfc9832a8e0e271db2fda"
+      }
+    ]
   }
 ]

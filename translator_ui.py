@@ -3,10 +3,10 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import ttk
-from engine import DATA, GermanTranslation, Language
+from engine import DATA, EnglishToGerman, GermanTranslation, Language
 from theme import BG, CARD, TEXT, MUTED, BORDER, SELECTION
 
-DIRECTIONS = {'Русский → Английский': 'ru', 'Английский → Русский': 'en', 'Немецкий → Русский': 'de'}
+DIRECTIONS = {'Русский → Английский': 'ru', 'Английский → Русский': 'en', 'Немецкий → Русский': 'de', 'Русский → Немецкий': 'ru_de'}
 
 class TranslatorUI:
     def __init__(self, tabs):
@@ -97,7 +97,12 @@ class TranslatorUI:
             if item is None: return
             generation, text, source = item
             try:
-                if source == 'de':
+                if source == 'ru_de':
+                    if not (DATA / 'translate-en_de-1_3').is_dir():
+                        raise FileNotFoundError('Модель для перевода на немецкий не установлена. Выберите немецкий компонент в установщике.')
+                    if 'ru' not in self.cache: self.cache['ru'] = Language('ru', load_speech=False)
+                    if 'ru_de' not in self.cache: self.cache['ru_de'] = EnglishToGerman(self.cache['ru'])
+                elif source == 'de':
                     if not (DATA / 'translate-de_en-1_9').is_dir():
                         raise FileNotFoundError('Немецкая модель не установлена. Выберите её в установщике.')
                     if 'en' not in self.cache: self.cache['en'] = Language('en', load_speech=False)

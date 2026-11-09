@@ -19,6 +19,21 @@ class LocalTranslatorTests(unittest.TestCase):
    self.assertEqual([(item['label'],item['state']) for item in FakeMenu.created.items],[('Копировать','normal')])
    app.finish_close()
 
+ def test_missing_german_component_reports_how_to_install(self):
+  from pathlib import Path
+  with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'LOCALAPPDATA':tmp,'LIVETRANSLATE_DOCUMENTS':os.path.join(tmp,'docs')}), patch('app.devices',return_value=([],[])), patch('translator_ui.DATA',Path(tmp)):
+   root=tk.Tk(); root.withdraw(); app=App(root); ui=app.translator
+   ui.direction.set('Русский → Немецкий'); ui.input.insert('1.0','Привет'); root.update(); ui.submit()
+   deadline=time.monotonic()+4
+   while time.monotonic()<deadline and 'не установлена' not in ui.status.get(): root.update(); time.sleep(.02)
+   self.assertIn('установщике',ui.status.get()); app.finish_close()
+
+ def test_russian_to_german_direction_uses_local_pivot(self):
+  from engine import DATA, EnglishToGerman, Language
+  if not (DATA / 'translate-en_de-1_3').is_dir(): self.skipTest('optional German model is not installed')
+  text = EnglishToGerman(Language('ru', load_speech=False)).translate('Привет, как дела?')
+  self.assertTrue(text.strip())
+
  def test_automatic_translation_discards_outdated_result(self):
   class Model:
    def __init__(self, source, load_speech=True): pass
