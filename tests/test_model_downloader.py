@@ -6,6 +6,7 @@ import tarfile
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 from installer import model_downloader as downloader
@@ -17,6 +18,32 @@ def package(name, data, task=None):
             'files':[{'path':'models/'+name, 'sha256':digest}]}
 
 class DownloaderTests(unittest.TestCase):
+    def test_background_install_extracts_verified_archive_and_rejects_traversal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); output=root/'downloads'; output.mkdir(); target=root/'app'
+            item=package('model.zip',b'x'); config=root/'packages.json'; config.write_text(json.dumps([item]),encoding='utf-8')
+            with zipfile.ZipFile(output/'model.zip','w') as archive: archive.writestr('model/weights.bin',b'weights')
+            with patch.object(downloader,'CONFIG',config):
+                downloader.install_downloads(target,output,set(),threading.Event(),queue.SimpleQueue())
+            self.assertEqual((target/'data/model/weights.bin').read_bytes(),b'weights')
+            with zipfile.ZipFile(output/'model.zip','w') as archive: archive.writestr('../escape',b'bad')
+            with patch.object(downloader,'CONFIG',config), self.assertRaises(ValueError):
+                downloader.install_downloads(target,output,set(),threading.Event(),queue.SimpleQueue())
+            self.assertFalse((target/'escape').exists())
+
+    def test_huggingface_worker_downloads_and_verifies_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp); item=package('model.bin',b'valid')
+            item.update(hf_repo='owner/model',hf_file='model.bin',hf_revision='revision')
+            def start(command, **kwargs):
+                folder=Path(command[-1]); folder.mkdir(parents=True)
+                (folder/'model.bin').write_bytes(b'valid')
+                process=unittest.mock.Mock(); process.poll.return_value=0; process.returncode=0
+                return process
+            with patch.object(downloader.subprocess,'Popen',side_effect=start):
+                downloader.download(item,output,threading.Event(),lambda n:None)
+            self.assertEqual((output/'model.bin').read_bytes(),b'valid')
+
     def test_extracts_only_verified_model_from_speaker_archive(self):
         model = b'model data'
         archive_bytes = io.BytesIO()

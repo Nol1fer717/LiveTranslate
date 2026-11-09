@@ -20,11 +20,13 @@ RATE = 16000
 FRAME = 512  # Silero's 32 ms analysis window
 END_OF_SENTENCE = re.compile(r"""[.!?…]["'»”)]*$""")
 REPEATED_NUMBER = re.compile(r"(?<!\d)(\d+)(?:[\s.,;:\-–—]+\1(?!\d)){6,}")
+PHANTOM_OUTRO = re.compile(r'(?i)(?:^|(?<=[.!?…])\s+)(?:продолжение следует|to be continued)\s*[.!?…]*\s*$')
 TERM_PATTERNS = [
     (re.compile(r"(?<!\w)(?:ссш|ссн|эс[ -]?эс[ -]?(?:эйч|аш)|ssh)(?!\w)", re.I), "SSH"),
     (re.compile(r"(?<!\w)(?:постгрес(?:с(?:а|у|ом|е)?)?|позгрес(?:с(?:а|у|ом|е)?)?|postgress|postgresql)(?!\w)", re.I), "PostgreSQL"),
     (re.compile(r"(?<!\w)(?:энджинкс(?:а|у|ом|е)?|инжинкс(?:а|у|ом|е)?|nginx)(?!\w)", re.I), "Nginx"),
 ]
+SENTENCE_BOUNDARY = re.compile(r'(?<=[.!?…])\s+(?=[A-ZА-ЯЁ«"])')
 _DLL_DIRECTORIES = []
 
 
@@ -33,6 +35,31 @@ def normalize_terms(text):
     for pattern, canonical in TERM_PATTERNS:
         text = pattern.sub(canonical, text)
     return text
+
+
+def remove_phantom_outro(text):
+    """Suppress Whisper's recurring standalone end-card hallucination."""
+    return PHANTOM_OUTRO.sub('', text).strip()
+
+
+def merge_uncertain_turns(groups):
+    """Keep brief uncertain words with adjacent speech without inventing a speaker."""
+    result = [(label, list(parts)) for label, parts in groups]
+    i = 0
+    while i < len(result):
+        label, parts = result[i]
+        if label == 'Голос не определён' and len(''.join(parts).split()) <= 2 and len(result) > 1:
+            if i > 0 and i + 1 < len(result) and result[i-1][0] == result[i+1][0]:
+                result[i-1:i+2] = [('Голос не определён', result[i-1][1] + parts + result[i+1][1])]
+                continue
+            if i > 0:
+                result[i-1:i+1] = [('Голос не определён', result[i-1][1] + parts)]
+                continue
+            result[:2] = [('Голос не определён', parts + result[1][1])]
+            i = 1
+            continue
+        i += 1
+    return result
 
 
 def load_whisper(folder, turbo_folder=None):
@@ -137,8 +164,11 @@ class WhisperStream:
                 text = " ".join(s.text.strip() for s in segments if reliable(s)).strip()
                 if not text or info.language_probability < 0.42 or info.language not in self.languages:
                     continue
-                text = normalize_terms((prefix + " " + text).strip())
-                translated = self.languages[info.language].translate(text)
+                text = remove_phantom_outro(normalize_terms((prefix + " " + text).strip()))
+                if not text:
+                    continue
+                translated = ' '.join(self.languages[info.language].translate(sentence)
+                                      for sentence in SENTENCE_BOUNDARY.split(text) if sentence.strip())
                 with self.preview_lock:
                     if generation == self.preview_generation:
                         self.preview((text, translated, info.language.upper()))
@@ -147,7 +177,7 @@ class WhisperStream:
                 continue
 
     def queue_preview(self):
-        if self.preview is None or len(self.frames) < 0.75 * RATE * 2 or self.clock - self.preview_at < 0.75 * RATE:
+        if self.preview is None or len(self.frames) < 0.6 * RATE * 2 or self.clock - self.preview_at < 0.6 * RATE:
             return
         self.preview_at = self.clock
         with self.preview_lock:
@@ -198,7 +228,7 @@ class WhisperStream:
                 self.frames.extend(frame)
                 self.voiced += int(probability >= 0.62)
             self.quiet = 0 if probability >= 0.38 else self.quiet + 1
-            if self.quiet >= 38:
+            if self.quiet >= 32:
                 self.finish(final=True)
             elif len(self.frames) >= 24 * RATE * 2:
                 self.finish(final=False)
@@ -206,11 +236,14 @@ class WhisperStream:
                 self.queue_preview()
 
     def publish(self, text, language, speaker):
+        text = remove_phantom_outro(text)
+        if not text:
+            return
         translation = self.languages.get(language)
         direction = {"en": "EN → RU", "ru": "RU → EN", "de": "DE → RU"}.get(language, language.upper())
         # Argos models translate a sentence at a time; a second sentence can be omitted
         # if it is appended to a long first sentence in the same translation request.
-        for sentence in re.split(r'(?<=[.!?…])\s+(?=[A-ZА-ЯЁ«"])', normalize_terms(text)):
+        for sentence in SENTENCE_BOUNDARY.split(normalize_terms(text)):
             translated = (translation.translate(sentence) if translation else
                           "Немецкий перевод не установлен. Запустите установщик снова и выберите немецкий язык."
                           if language == "de" else "Перевод для этого языка не установлен.")
@@ -294,7 +327,7 @@ class WhisperStream:
                     groups.append((label, []))
                 groups[-1][1].append(word.word)
             self.flush_text()
-            for label, parts in groups:
+            for label, parts in merge_uncertain_turns(groups):
                 text = ''.join(parts).strip()
                 if text:
                     self.publish(text, language, label)
@@ -316,6 +349,7 @@ class WhisperStream:
                 suffix = "".join(word.word for seg in rest if reliable(seg)
                                  for word in (seg.words or []) if word.start < len(tail) / RATE).strip()
                 text = (text + " " + suffix).strip()
+        text = remove_phantom_outro(text)
         if not text:
             if final:
                 self.flush_text()

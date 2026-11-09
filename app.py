@@ -1,6 +1,7 @@
 import queue
 import os
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,13 @@ DIRECTIONS = ("Автоопределение", "Русский → Англий
 MODES = ("Микрофон", "Звук компьютера", "Микрофон + компьютер")
 VIEWS = ("Оба", "Транскрипция", "Перевод")
 BLUE, PURPLE = ACCENT, ACCENT_DARK
+
+
+def base_models_ready():
+    required = ('whisper-small/model.bin', 'whisper-small/config.json', 'whisper-small/tokenizer.json',
+                'translate-en_ru-1_9/model/model.bin', 'translate-ru_en-1_9/model/model.bin',
+                'vosk-model-small-en-us-0.15/am/final.mdl', 'vosk-model-small-ru-0.22/am/final.mdl')
+    return all((DATA / name).is_file() for name in required)
 
 
 class App:
@@ -190,6 +198,10 @@ class App:
         self.scan()
         self.set_mode(self.mode.get())
         self.set_view(self.view.get())
+        self.models_ready = base_models_ready()
+        self.last_model_check = 0.0
+        if not self.models_ready:
+            self.status.set('Загрузка моделей выполняется в фоне')
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.poll_job = None
         self.poll()
@@ -284,6 +296,9 @@ class App:
             self.stop.set()
             self.start.configure(state="disabled")
             self.status.set("Завершаем обработку…")
+            return
+        if not base_models_ready():
+            messagebox.showinfo('Подготовка моделей', 'Модели ещё загружаются в фоне после установки. Дождитесь окончания подготовки. Если загрузка не завершилась, запустите установщик повторно.')
             return
         indices = ((0,), (1,), (0, 1))[MODES.index(self.mode.get())]
         selected = []
@@ -383,6 +398,15 @@ class App:
             emit("done", None, None)
 
     def poll(self):
+        now = time.monotonic()
+        if now - self.last_model_check >= 1:
+            self.last_model_check = now
+            ready = base_models_ready()
+            if ready and not self.models_ready:
+                self.status.set('Модели готовы. Можно начать перевод')
+                self.speaker_check.configure(text='Различать голоса' if SPEAKER_PATH.is_dir() else 'Различение голосов не установлено')
+                self.update_devices()
+            self.models_ready = ready
         while not self.events.empty():
             kind, index, value = self.events.get()
             if kind == "partial":

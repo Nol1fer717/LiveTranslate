@@ -4,7 +4,7 @@ import threading
 from unittest.mock import Mock, patch
 
 import numpy as np
-from whisper_stream import RATE, WhisperStream, normalize_terms
+from whisper_stream import RATE, WhisperStream, normalize_terms, remove_phantom_outro
 
 
 def segment(text, words):
@@ -13,6 +13,14 @@ def segment(text, words):
 
 
 class StreamTests(unittest.TestCase):
+    def test_suppresses_phantom_outro_without_removing_normal_sentences(self):
+        self.assertEqual(remove_phantom_outro('Продолжение следует...'), '')
+        self.assertEqual(remove_phantom_outro('Привет. Продолжение следует.'), 'Привет.')
+        self.assertEqual(remove_phantom_outro('Hello. To be continued.'), 'Hello.')
+        self.assertEqual(remove_phantom_outro('Вот что это за продолжение следует?'), 'Вот что это за продолжение следует?')
+        self.stream.publish('Продолжение следует.', 'en', None)
+        self.assertFalse(self.lines)
+
     def test_missing_german_model_reports_how_to_install_it(self):
         self.stream.publish("Guten Tag.", "de", None)
         self.assertEqual(self.lines[0][0], "Guten Tag.")
@@ -105,7 +113,7 @@ class StreamTests(unittest.TestCase):
         self.model.transcribe.return_value = ([segment('Hello there both', [(0.1, 0.6, 'Hello'), (1.05, 1.3, ' there'), (1.6, 1.9, ' both')])], None)
         self.stream.frames.extend(bytes(2 * RATE * 2)); self.stream.voiced = 20
         self.stream.finish(final=True)
-        self.assertEqual([(x[0], x[2]) for x in self.lines], [('Hello', 'Голос 1'), ('there', 'Голос 2'), ('both', 'Голос не определён')])
+        self.assertEqual([(x[0], x[2]) for x in self.lines], [('Hello', 'Голос 1'), ('there both', 'Голос не определён')])
 
     def test_late_preview_cannot_reappear_after_finalization(self):
         started, release = threading.Event(), threading.Event()

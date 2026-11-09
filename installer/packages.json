@@ -9,7 +9,10 @@
         "path": "data/whisper-small/model.bin",
         "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"
       }
-    ]
+    ],
+    "hf_repo": "Systran/faster-whisper-small",
+    "hf_revision": "536b0662742c02347bc0e980a01041f333bce120",
+    "hf_file": "model.bin"
   },
   {
     "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json",

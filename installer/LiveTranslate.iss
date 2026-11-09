@@ -8,7 +8,7 @@
 [Setup]
 AppId={{C1AD0775-5F30-4C86-9D6B-708E44F090A2}
 AppName=LiveTranslate
-AppVersion=1.4.0
+AppVersion=1.4.1
 AppPublisher=LiveTranslate
 DefaultDirName={autopf}\LiveTranslate
 DefaultGroupName=LiveTranslate
@@ -38,8 +38,7 @@ Name: "speakers"; Description: "Различать голоса собеседн
 Name: "nvidia"; Description: "Дополнительно установить ускорение NVIDIA (определяется автоматически)"; Flags: unchecked
 
 [Files]
-Source: "{#PayloadDir}\model_downloader.exe"; Flags: dontcopy
-Source: "{#PayloadDir}\*"; DestDir: "{app}"; Excludes: "\_internal\nvidia\*,\data\*,\model_downloader.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PayloadDir}\*"; DestDir: "{app}"; Excludes: "\_internal\nvidia\*,\data\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{tmp}\downloads\model.bin"; DestDir: "{app}\data\whisper-small"; DestName: "model.bin"; ExternalSize: 486197344; Hash: "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671"; Check: HasDownload('model.bin'); Flags: external ignoreversion
 Source: "{tmp}\downloads\config.json"; DestDir: "{app}\data\whisper-small"; DestName: "config.json"; ExternalSize: 2200; Hash: "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828"; Check: HasDownload('config.json'); Flags: external ignoreversion
 Source: "{tmp}\downloads\tokenizer.json"; DestDir: "{app}\data\whisper-small"; DestName: "tokenizer.json"; ExternalSize: 2200000; Hash: "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab"; Check: HasDownload('tokenizer.json'); Flags: external ignoreversion
@@ -67,7 +66,13 @@ Name: "{autoprograms}\LiveTranslate"; Filename: "{app}\LiveTranslate.exe"
 Name: "{autodesktop}\LiveTranslate"; Filename: "{app}\LiveTranslate.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\model_downloader.exe"; Parameters: "{code:BackgroundArgs}"; Flags: nowait
 Filename: "{app}\LiveTranslate.exe"; Description: "Запустить LiveTranslate"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\data"
+Type: filesandordirs; Name: "{app}\.model-downloads"
+Type: filesandordirs; Name: "{app}\_internal\nvidia"
 
 [Code]
 function HasDownload(Name: String): Boolean;
@@ -75,21 +80,15 @@ begin
   Result := FileExists(ExpandConstant('{tmp}\downloads\' + Name));
 end;
 
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-var Args, Tasks: String; ResultCode: Integer;
+function BackgroundArgs(Param: String): String;
+var Tasks: String;
 begin
-  Result := '';
   Tasks := '';
   if WizardIsTaskSelected('german') then Tasks := Tasks + 'german,';
   if WizardIsTaskSelected('speakers') then Tasks := Tasks + 'speakers,';
   if WizardIsTaskSelected('nvidia') then Tasks := Tasks + 'nvidia,';
-  ExtractTemporaryFile('model_downloader.exe');
-  Args := '--target "' + ExpandConstant('{app}') + '" --output "' + ExpandConstant('{tmp}\downloads') + '" --auto-gpu --tasks "' + Tasks + '"';
-  if WizardSilent then Args := Args + ' --silent';
-  if not Exec(ExpandConstant('{tmp}\model_downloader.exe'), Args, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode) then
-    Result := 'Не удалось запустить загрузку компонентов.'
-  else if ResultCode <> 0 then
-    Result := 'Загрузка компонентов не завершена. Проверьте соединение и попробуйте снова.';
+  Result := '--target "' + ExpandConstant('{app}') + '" --output "' + ExpandConstant('{app}\.model-downloads') + '" --auto-gpu --install --tasks "' + Tasks + '"';
+  if WizardSilent then Result := Result + ' --silent';
 end;
 
 function InitializeSetup(): Boolean;
