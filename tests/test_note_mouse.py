@@ -33,6 +33,17 @@ class NoteMouseTests(unittest.TestCase):
             self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), self.root.winfo_rootx() + self.root.winfo_width())
             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), self.root.winfo_rooty() + self.root.winfo_height())
 
+    def test_folder_heading_count_and_empty_editor(self):
+        self.assertEqual(self.ui.note_count.get(), '0')
+        self.assertEqual(str(self.ui.delete_note_button['state']), 'disabled')
+        with patch('library_ui.simpledialog.askstring', return_value='Разговор'):
+            self.ui.add_folder()
+        self.assertEqual(self.ui.note_heading.get(), 'Разговор')
+        self.ui.add_note()
+        self.assertEqual(self.ui.note_count.get(), '1')
+        self.assertEqual(str(self.ui.delete_note_button['state']), 'normal')
+        self.assertFalse(self.ui.empty_editor.winfo_ismapped())
+
     def test_right_click_note_and_blank_and_inline_rename(self):
         self.ui.add_note(); self.root.update()
         bounds = self.ui.note_list.bbox(0)
