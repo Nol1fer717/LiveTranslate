@@ -93,7 +93,9 @@ class App:
         options = tk.Frame(controls, bg=CARD)
         options.grid(row=3, sticky="ew", pady=(10, 0))
         self.identify = tk.BooleanVar(value=SPEAKER_PATH.is_dir())
-        self.speaker_check = tk.Checkbutton(options, text="Различать голоса", variable=self.identify,
+        self.speaker_check = tk.Checkbutton(options,
+                                            text="Различать голоса" if SPEAKER_PATH.is_dir() else "Различение голосов не установлено",
+                                            variable=self.identify,
                                             bg=CARD, fg=TEXT, selectcolor=FIELD, activebackground=CARD,
                                             activeforeground=TEXT, highlightthickness=0)
         self.speaker_check.pack(side="left")
@@ -293,7 +295,7 @@ class App:
                 for src in (("ru", "en") if lang == "auto" else (lang,)):
                     if src not in self.cache:
                         self.cache[src] = Language(src)
-                if lang == "auto" and "de" not in self.cache:
+                if lang == "auto" and "de" not in self.cache and (DATA / "translate-de_en-1_9").is_dir():
                     self.cache["de"] = GermanTranslation(self.cache["en"])
             with pa.PyAudio() as audio:
                 workers = []
