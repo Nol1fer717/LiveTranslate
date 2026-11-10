@@ -442,7 +442,9 @@ class WhisperStream:
                 words.append(SimpleNamespace(word=(' ' if i else '') + shown, start=last_end, end=last_end))
             else:
                 original = words[i]
-                words[i] = SimpleNamespace(word=(' ' if i else '') + shown, start=original.start, end=original.end)
+                punctuation = re.search(r'[.!?…]+["\'»”)]*$', original.word.strip())
+                suffix = punctuation.group(0) if punctuation else ''
+                words[i] = SimpleNamespace(word=(' ' if i else '') + shown + suffix, start=original.start, end=original.end)
         if not final:
             # Prefer punctuation away from the uncertain right edge. Otherwise keep the
             # unfinished sentence as text and re-decode its audio tail with the next window.

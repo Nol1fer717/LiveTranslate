@@ -14,6 +14,14 @@ def segment(text, words):
 
 
 class StreamTests(unittest.TestCase):
+    def test_long_window_preserves_punctuation_for_committed_words(self):
+        self.stream.preview=lambda value: None
+        self.stream.stable_words.update('hello there'); self.stream.stable_words.update('hello there')
+        self.model.detect_language.return_value=('en', .99, [])
+        self.model.transcribe.return_value=([segment('hello there.', [(0, 2, 'hello'), (2, 4, ' there.')])], None)
+        self.stream.frames.extend(bytes(24 * RATE * 2)); self.stream.voiced=50
+        self.stream.finish(final=False)
+        self.assertEqual([line[0] for line in self.lines], ['hello there.'])
     def test_quiet_short_phrase_does_not_commit_invented_preview_words(self):
         self.stream.quiet_mode = True
         self.stream.preview = lambda value: None

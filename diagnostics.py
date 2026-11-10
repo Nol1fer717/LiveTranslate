@@ -24,7 +24,7 @@ def configure(root=None):
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
-    logger.info('Запуск: версия=%s ОС=%s Python=%s', '1.5.0', platform.system(), platform.python_version())
+    logger.info('Запуск: версия=%s ОС=%s Python=%s', '1.5.1', platform.system(), platform.python_version())
     def main_hook(kind, value, tb):
         log_error('main', kind, tb)
     def thread_hook(args):

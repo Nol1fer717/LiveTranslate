@@ -215,8 +215,8 @@ class App:
         self.history.tag_configure("target_label", foreground=self.palette['ACCENT_DARK'], font=("Segoe UI", 10, "bold"))
         self.history.tag_configure("source", foreground=self.palette['MUTED'], font=("Segoe UI", 12), spacing3=6)
         self.history.tag_configure("target", foreground=self.palette['TEXT'], font=("Segoe UI", 13), spacing3=12)
-        self.history.tag_configure("target_label", justify="right")
-        self.history.tag_configure("target", justify="right")
+        self.history.tag_configure("target_label", justify="left")
+        self.history.tag_configure("target", justify="left")
         self.history.tag_configure("placeholder", foreground=self.palette['MUTED'], font=("Segoe UI", 11))
 
         self.storage = Storage()
@@ -514,7 +514,7 @@ class App:
             for tag in ('source', 'source_label'):
                 self.history.tag_configure(tag, rmargin=margin)
             for tag in ('target', 'target_label'):
-                self.history.tag_configure(tag, lmargin1=margin, lmargin2=margin, justify='right')
+                self.history.tag_configure(tag, lmargin1=margin, lmargin2=margin, justify='left')
         if self._history_at_bottom:
             self.root.after_idle(lambda: self.history.see('end') if self.history.winfo_exists() else None)
 
