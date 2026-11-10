@@ -10,6 +10,25 @@ from unittest.mock import patch
 from app import App
 
 class AppLibraryTests(unittest.TestCase):
+    def test_overlapping_sources_stay_in_first_seen_order(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'LOCALAPPDATA': directory, 'LIVETRANSLATE_DOCUMENTS': os.path.join(directory, 'Documents')}), patch('app.devices', return_value=([], [])), patch('theme_manager.system_theme', return_value='light'):
+            root=tk.Tk(); app=App(root)
+            def send(kind, index, value):
+                root.after_cancel(app.poll_job); app.events.put((kind,index,value)); app.poll()
+            try:
+                send('preview',1,('Computer first','Первый','EN'))
+                send('preview',0,('Microphone next','Второй','EN'))
+                send('line',0,('Microphone final','Микрофон',None,'EN → RU'))
+                text=app.history.get('1.0','end-1c')
+                self.assertLess(text.index('Computer first'), text.index('Microphone final'))
+                send('preview',1,('Computer continues','Продолжение','EN'))
+                text=app.history.get('1.0','end-1c')
+                self.assertLess(text.index('Computer continues'), text.index('Microphone final'))
+                send('line',1,('Computer final','Компьютер',None,'EN → RU'))
+                text=app.history.get('1.0','end-1c')
+                self.assertLess(text.index('Computer final'), text.index('Microphone final'))
+                self.assertNotIn('Computer continues', text)
+            finally: app.finish_close()
     def test_palette_changes_only_current_window_without_module_mutation(self):
         import theme
         original=theme.BG

@@ -283,6 +283,8 @@ class App:
         self.entries = []
         self.previews = {}
         self.partials = {}
+        self.preview_positions = {}
+        self.preview_sequence = 0
         self.unrecognized_audio = []
         self.stop = None
         self.restart_required = False
@@ -443,7 +445,10 @@ class App:
         anchor = self.history.index('@0,0') if not at_bottom else None
         self.history.configure(state="normal")
         old_count = getattr(self, '_rendered_count', None)
-        incremental = (old_count is not None and old_count <= len(self.entries)
+        interleaved = any(pos < len(self.entries) and (self.previews.get(i) or self.partials.get(i))
+                          for i, (pos, _) in self.preview_positions.items())
+        incremental = (not interleaved and not getattr(self, '_rendered_interleaved', False)
+                       and old_count is not None and old_count <= len(self.entries)
                        and getattr(self, '_rendered_view', None) == self.view.get()
                        and not getattr(self, '_rendered_placeholder', True))
         if incremental:
@@ -458,7 +463,18 @@ class App:
             if placeholder:
                 self.history.insert("end", "Здесь появятся распознанная речь и перевод.", "placeholder")
             new_entries = self.entries
+        if interleaved:
+            pending = sorted(((pos, sequence, i) for i, (pos, sequence) in self.preview_positions.items()
+                              if self.previews.get(i) or self.partials.get(i)))
+            combined = []
+            for position in range(len(self.entries) + 1):
+                combined.extend({'preview_index': i} for pos, _, i in pending if pos == position)
+                if position < len(self.entries): combined.append(self.entries[position])
+            new_entries = combined
         for entry in new_entries:
+            if 'preview_index' in entry:
+                self.render_source_preview(entry['preview_index'])
+                continue
             if entry.get("session"):
                 self.history.insert("end", entry["session"] + "\n", "meta")
                 continue
@@ -474,11 +490,25 @@ class App:
         self.history.mark_set('preview_start', 'end-1c')
         self.history.mark_gravity('preview_start', 'left')
         self._rendered_count = len(self.entries)
+        self._rendered_interleaved = interleaved
         self._rendered_view = self.view.get()
         self._rendered_placeholder = placeholder
-        for index, value in self.previews.items():
-            if not value:
-                continue
+        if not interleaved:
+            for index in dict.fromkeys((*self.previews, *self.partials)):
+                self.render_source_preview(index)
+        if selected_text:
+            match = self.history.search(selected_text, "1.0", stopindex="end", exact=True)
+            if match:
+                self.history.tag_add("sel", match, f"{match}+{len(selected_text)}c")
+        if anchor is not None:
+            self.history.yview(anchor)
+        elif at_bottom:
+            self.history.see("end")
+        self.history.configure(state="disabled")
+
+    def render_source_preview(self, index):
+        value = self.previews.get(index)
+        if value:
             source, target, *language = value
             source_lang = language[0] if language else "…"
             translating = bool(len(language) > 1 and language[1])
@@ -490,20 +520,9 @@ class App:
             if self.view.get() != VIEWS[1]:
                 self.history.insert("end", f"[{target_lang}]  ", "target_label")
                 self.history.insert("end", ((target + '  ·  Переводим…') if target and translating else (target or 'Переводим…')) + "\n", "target")
-        if self.view.get() != VIEWS[2]:
-            for index, partial in self.partials.items():
-                if partial and not self.previews.get(index):
-                    self.history.insert("end", f"{SOURCES[index]} · Распознавание\n", "meta")
-                    self.history.insert("end", partial + "\n", "source")
-        if selected_text:
-            match = self.history.search(selected_text, "1.0", stopindex="end", exact=True)
-            if match:
-                self.history.tag_add("sel", match, f"{match}+{len(selected_text)}c")
-        if anchor is not None:
-            self.history.yview(anchor)
-        elif at_bottom:
-            self.history.see("end")
-        self.history.configure(state="disabled")
+        elif self.view.get() != VIEWS[2] and self.partials.get(index):
+            self.history.insert("end", f"{SOURCES[index]} · Распознавание\n", "meta")
+            self.history.insert("end", self.partials[index] + "\n", "source")
 
     def render_preview(self):
         self.render()
@@ -683,9 +702,15 @@ class App:
                 elif recovered is True:
                     self.status.set('Проверка моделей завершена. Можно начать перевод.')
             elif kind == "partial":
+                if value and index not in self.preview_positions:
+                    self.preview_positions[index] = (len(self.entries), self.preview_sequence)
+                    self.preview_sequence += 1
                 self.partials[index] = value
                 self.render_preview()
             elif kind == "preview":
+                if value and index not in self.preview_positions:
+                    self.preview_positions[index] = (len(self.entries), self.preview_sequence)
+                    self.preview_sequence += 1
                 old = self.previews.get(index)
                 if value and not value[1] and old and old[1]:
                     source, _, *language = value
@@ -708,7 +733,14 @@ class App:
                 entry = {"time": datetime.now().strftime("%H:%M:%S"), "index": index,
                          "speaker": speaker, "from": source_lang, "to": target_lang,
                          "source": source, "target": target}
-                self.entries.append(entry)
+                slot = self.preview_positions.pop(index, (len(self.entries), self.preview_sequence))
+                position, sequence = slot
+                self.entries.insert(position, entry)
+                for other, (other_position, other_sequence) in list(self.preview_positions.items()):
+                    if (other_position, other_sequence) > slot:
+                        self.preview_positions[other] = (other_position + 1, other_sequence)
+                if position != len(self.entries) - 1 or self.preview_positions:
+                    self._rendered_count = None
                 if self.session_id is not None:
                     try:
                         self.storage.add_phrase(self.session_id, entry)
@@ -755,6 +787,7 @@ class App:
                             return
                 self.previews.clear()
                 self.partials.clear()
+                self.preview_positions.clear()
                 self.render_preview()
                 self.direction.configure(state="readonly")
                 self.refresh.configure(state="normal")
