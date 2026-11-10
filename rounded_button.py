@@ -2,7 +2,7 @@
 import tkinter as tk
 from tkinter import font as tkfont
 
-from theme import ACCENT
+from theme_manager import palette_for
 
 
 class RoundedButton(tk.Button):
@@ -17,7 +17,7 @@ class RoundedButton(tk.Button):
         self._image_key = None
         options.update(background=self._outer, activebackground=self._outer, relief='flat',
                        borderwidth=0, highlightthickness=1, highlightbackground=self._outer,
-                       highlightcolor=ACCENT, compound='center', padx=0, pady=0)
+                       highlightcolor=palette_for(parent)['ACCENT'], compound='center', padx=0, pady=0)
         super().__init__(parent, **options)
         self._ready = True
         self.bind('<Enter>', self._enter, add='+')
@@ -56,6 +56,8 @@ class RoundedButton(tk.Button):
 
     def _paint(self, width=0, height=0):
         face = tkfont.Font(root=self, font=self.cget('font'))
+        width = max(width, self.winfo_width() - 2)
+        height = max(height, self.winfo_height() - 2)
         width = max(width, face.measure(self.cget('text')) + self._pad_x * 2, 20)
         height = max(height, face.metrics('linespace') + self._pad_y * 2, 20)
         color = self._hover if self._inside and str(self.cget('state')) != 'disabled' else self._fill

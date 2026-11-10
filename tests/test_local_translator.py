@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from test_note_mouse import FakeMenu
 from app import App
 from translator_ui import prepare_translation_text, detect_text_language
+from clipboard_shortcuts import clipboard_shortcut
 
 class LocalTranslatorTests(unittest.TestCase):
  def test_spoken_russian_preparation_preserves_context_and_profanity(self):
@@ -42,19 +43,19 @@ class LocalTranslatorTests(unittest.TestCase):
    ui.input.focus_force(); root.update()
    ui.input.insert('1.0','Привет'); ui.input.tag_add('sel','1.0','1.6')
    ui.input.edit_separator()
-   self.assertEqual(ui.clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=67,keysym='Cyrillic_es',state=4)), 'break')
+   self.assertEqual(clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=67,keysym='Cyrillic_es',state=4)), 'break')
    self.assertEqual(root.clipboard_get(), 'Привет')
    ui.input.mark_set('insert','end-1c'); ui.input.tag_remove('sel','1.0','end')
-   self.assertEqual(ui.clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=86,keysym='Cyrillic_em',state=4)), 'break')
+   self.assertEqual(clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=86,keysym='Cyrillic_em',state=4)), 'break')
    self.assertEqual(ui.input.get('1.0','end-1c'), 'ПриветПривет')
-   self.assertEqual(ui.clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=90,keysym='Cyrillic_ya',state=4)), 'break')
+   self.assertEqual(clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=90,keysym='Cyrillic_ya',state=4)), 'break')
    self.assertEqual(ui.input.get('1.0','end-1c'), 'Привет')
    root.update(); ui.set_output('Hello'); ui.output.focus_force(); root.update(); ui.output.tag_add('sel','1.0','1.5')
-   self.assertEqual(ui.clipboard_shortcut(SimpleNamespace(widget=ui.output,keycode=67,keysym='Cyrillic_es',state=4)), 'break')
+   self.assertEqual(clipboard_shortcut(SimpleNamespace(widget=ui.output,keycode=67,keysym='Cyrillic_es',state=4)), 'break')
    self.assertEqual(root.clipboard_get(), 'Hello')
-   self.assertIsNone(ui.clipboard_shortcut(SimpleNamespace(widget=ui.output,keycode=86,state=4)))
-   self.assertIsNone(ui.clipboard_shortcut(SimpleNamespace(widget=ui.output,keycode=90,state=4)))
-   self.assertIsNone(ui.clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=67,state=12)))
+   self.assertIsNone(clipboard_shortcut(SimpleNamespace(widget=ui.output,keycode=86,state=4)))
+   self.assertIsNone(clipboard_shortcut(SimpleNamespace(widget=ui.output,keycode=90,state=4)))
+   self.assertIsNone(clipboard_shortcut(SimpleNamespace(widget=ui.input,keycode=67,state=12)))
    app.finish_close()
 
  def test_context_menu_allows_paste_in_input_and_copy_in_output(self):

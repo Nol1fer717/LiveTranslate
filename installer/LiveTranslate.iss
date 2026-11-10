@@ -8,8 +8,9 @@
 [Setup]
 AppId={{C1AD0775-5F30-4C86-9D6B-708E44F090A2}
 AppName=LiveTranslate
-AppVersion=1.4.2
+AppVersion=1.5.0
 AppPublisher=LiveTranslate
+AppMutex=Local\LiveTranslate.ModelsDownload.1
 DefaultDirName={autopf}\LiveTranslate
 DefaultGroupName=LiveTranslate
 PrivilegesRequired=admin
@@ -23,7 +24,7 @@ SolidCompression=no
 WizardStyle=modern
 ArchiveExtraction=full
 CloseApplications=yes
-CloseApplicationsFilter=LiveTranslate.exe
+CloseApplicationsFilter=LiveTranslate.exe,model_downloader.exe
 UninstallDisplayIcon={app}\LiveTranslate.exe
 SetupLogging=yes
 
@@ -67,7 +68,7 @@ Name: "{autodesktop}\LiveTranslate"; Filename: "{app}\LiveTranslate.exe"; Tasks:
 
 [Run]
 Filename: "{app}\model_downloader.exe"; Parameters: "{code:BackgroundArgs}"; Flags: nowait
-Filename: "{app}\LiveTranslate.exe"; Description: "Запустить LiveTranslate"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\LiveTranslate.exe"; Description: "Запустить LiveTranslate"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\data"

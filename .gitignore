@@ -3,4 +3,17 @@ data/
 __pycache__/
 build/
 dist/
+dist-installer/
 *.wav
+.scratch/
+/AGENTS.md
+/FUNCTIONALITY.md
+/RELEASE_NOTES.md
+/BUG_REPORT.md
+/ARCHITECTURE.md
+/TEST_CASES.md
+/FIX_HISTORY.md
+/.pytest_cache/
+/.test-temp/
+/.coverage
+/htmlcov/

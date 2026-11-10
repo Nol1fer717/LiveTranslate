@@ -1,4 +1,4 @@
-"""Persistent user preferences for speech segmentation."""
+"""Persistent user preferences and speech segmentation settings."""
 import json
 import os
 import tempfile
@@ -7,27 +7,38 @@ from pathlib import Path
 DEFAULT_SPLIT = 5
 
 
-def read_split_level(path):
+def read_preferences(path):
     try:
-        value = json.loads(Path(path).read_text(encoding='utf-8')).get('split_level', DEFAULT_SPLIT)
-        if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10:
-            return value
-    except (OSError, ValueError, TypeError, AttributeError):
-        pass
+        value = json.loads(Path(path).read_text(encoding='utf-8'))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def save_preferences(path, updates):
+    path = Path(path)
+    values = read_preferences(path)
+    values.update(updates)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(values, stream, ensure_ascii=False)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def read_split_level(path):
+    value = read_preferences(path).get('split_level', DEFAULT_SPLIT)
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10:
+        return value
     return DEFAULT_SPLIT
 
 
 def save_split_level(path, value):
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10:
         raise ValueError('Скорость разбиения должна быть от 1 до 10')
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as stream:
-            temporary = Path(stream.name)
-            json.dump({'split_level': value}, stream, ensure_ascii=False)
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    save_preferences(path, {'split_level': value})

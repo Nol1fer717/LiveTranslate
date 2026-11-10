@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 if not getattr(sys, 'frozen', False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from gpu_detection import nvidia_memory, supports_turbo
+import diagnostics
 
 CONFIG = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent)) / 'packages.json'
 CHUNK = 1024 * 1024
@@ -26,6 +27,33 @@ HF_TIMEOUT_SECONDS = 900
 # Frozen windowed executables have no stdout/stderr. Hugging Face's console
 # progress bar otherwise fails before a download can start.
 os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+
+
+class ProgressTimeout:
+    """Time out on stalled downloads, not on total transfer duration."""
+    def __init__(self, now, timeout=HF_TIMEOUT_SECONDS):
+        self.last_change = now
+        self.last_size = 0
+        self.timeout = timeout
+
+    def stalled(self, now, size):
+        if size != self.last_size:
+            self.last_size = size
+            self.last_change = now
+        return now - self.last_change > self.timeout
+
+
+def observed_download_size(directory):
+    if not directory.exists():
+        return 0
+    size = 0
+    for item in directory.rglob('*.incomplete'):
+        try:
+            size += item.stat().st_size
+        except FileNotFoundError:
+            # The downloader can finish and rename a temporary file concurrently.
+            continue
+    return size
 
 
 def file_digest(path, cancelled):
@@ -60,14 +88,14 @@ def download(package, output, cancelled, notify):
                 if not getattr(sys, 'frozen', False): command.append(str(Path(__file__).resolve()))
                 command.extend(['--hf-worker', package['hf_repo'], package['hf_file'], package['hf_revision'], str(local_dir)])
                 process = subprocess.Popen(command, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                started, last_size = time.monotonic(), 0
+                deadline, last_size = ProgressTimeout(time.monotonic()), 0
                 try:
                     while process.poll() is None:
-                        if cancelled.is_set() or time.monotonic() - started > HF_TIMEOUT_SECONDS:
+                        size = observed_download_size(local_dir)
+                        if cancelled.is_set() or deadline.stalled(time.monotonic(), size):
                             process.terminate(); process.wait(timeout=10)
                             if cancelled.is_set(): raise InterruptedError('Загрузка отменена')
                             raise TimeoutError(f"Превышено время загрузки {package['name']}")
-                        size = sum(p.stat().st_size for p in local_dir.rglob('*.incomplete') if p.is_file()) if local_dir.exists() else 0
                         if size > last_size: notify(size - last_size)
                         last_size = size
                         time.sleep(0.5)
@@ -83,15 +111,34 @@ def download(package, output, cancelled, notify):
                 notify(max(0, destination.stat().st_size - last_size))
                 return
             digest = hashlib.sha256()
-            agent = 'Mozilla/5.0' if package['name'] == 'translate-en_de-1_3.zip' else 'LiveTranslate-Installer/1.3'
-            request = Request(package['url'], headers={'User-Agent': agent})
-            with urlopen(request, timeout=30) as response, temporary.open('wb') as target:
-                while data := response.read(CHUNK):
-                    if cancelled.is_set():
-                        raise InterruptedError('Загрузка отменена')
-                    digest.update(data)
-                    target.write(data)
-                    notify(len(data))
+            offset = temporary.stat().st_size if temporary.is_file() else 0
+            if offset:
+                with temporary.open('rb') as previous:
+                    while data := previous.read(CHUNK):
+                        if cancelled.is_set(): raise InterruptedError('Загрузка отменена')
+                        digest.update(data)
+            if not offset or digest.hexdigest() != package['sha256']:
+                agent = 'Mozilla/5.0' if package['name'] == 'translate-en_de-1_3.zip' else 'LiveTranslate-Installer/1.3'
+                headers = {'User-Agent': agent}
+                if offset: headers['Range'] = f'bytes={offset}-'
+                request = Request(package['url'], headers=headers)
+                with urlopen(request, timeout=30) as response:
+                    status = getattr(response, 'status', 200)
+                    if offset and status == 206:
+                        content_range = response.headers.get('Content-Range', '')
+                        if not content_range.startswith(f'bytes {offset}-'):
+                            raise ValueError('Сервер вернул неверный диапазон загрузки')
+                        mode = 'ab'
+                    else:
+                        mode = 'wb'
+                        digest = hashlib.sha256()
+                    with temporary.open(mode) as target:
+                        while data := response.read(CHUNK):
+                            if cancelled.is_set():
+                                raise InterruptedError('Загрузка отменена')
+                            digest.update(data)
+                            target.write(data)
+                            notify(len(data))
             if digest.hexdigest() != package['sha256']:
                 raise ValueError(f"Не совпала контрольная сумма: {package['name']}")
             if package.get('archive_member'):
@@ -114,7 +161,8 @@ def download(package, output, cancelled, notify):
             return
         except (OSError, ValueError) as exc:
             last_error = exc
-            temporary.unlink(missing_ok=True)
+            if isinstance(exc, ValueError) or getattr(exc, 'code', None) == 416:
+                temporary.unlink(missing_ok=True)
             if attempt < 2 and not cancelled.is_set():
                 time.sleep(attempt + 1)
     raise RuntimeError(f"Не удалось скачать {package['name']}: {last_error}")
@@ -136,27 +184,32 @@ def prepare(target, output, tasks, cancelled, updates):
     with ThreadPoolExecutor(max_workers=min(4, len(needed))) as pool:
         futures = {pool.submit(download, package, output, cancelled,
                                lambda count: updates.put(('bytes', count))): package for package in needed}
-        optional_failed = False
+        failed_tasks = set()
         for future in as_completed(futures):
             try:
                 future.result()
-            except Exception:
-                if futures[future]['task'] in ('nvidia', 'turbo') and not cancelled.is_set():
-                    optional_failed = True
+            except Exception as exc:
+                diagnostics.log_error('model_download', type(exc), exc.__traceback__)
+                if futures[future]['task'] is not None and not cancelled.is_set():
+                    failed_tasks.add(futures[future]['task'])
                     continue
                 cancelled.set()
                 raise
-    if optional_failed:
-        # Do not install a partial GPU/model set; the base Small CPU build works.
+    if failed_tasks:
+        if failed_tasks & {'nvidia', 'turbo'}:
+            failed_tasks.update({'nvidia', 'turbo'})
         for package in needed:
-            if package['task'] in ('nvidia', 'turbo'):
+            if package['task'] in failed_tasks:
                 (output / package['name']).unlink(missing_ok=True)
-        updates.put(('status', 'Не удалось загрузить ускорение. Установка продолжится с Whisper Small на CPU.'))
+        updates.put(('warning', 'Не удалось загрузить некоторые дополнительные компоненты: ' + ', '.join(sorted(failed_tasks)) + '. Базовые модели будут установлены. Запустите установщик повторно, чтобы скачать недостающие компоненты.'))
 
 
 def install_downloads(target, output, tasks, cancelled, updates):
     """Install downloaded, verified components after setup has completed."""
     packages = json.loads(CONFIG.read_text(encoding='utf-8'))
+    marker = target / 'data' / '.models-installing'
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
     for package in packages:
         if package['task'] is not None and package['task'] not in tasks:
             continue
@@ -165,6 +218,9 @@ def install_downloads(target, output, tasks, cancelled, updates):
             continue  # Already installed, or an optional GPU download failed.
         if cancelled.is_set():
             raise InterruptedError('Подготовка отменена')
+        expected = package['files'][0]['sha256'] if package.get('archive_member') else package['sha256']
+        if file_digest(source, cancelled) != expected:
+            raise ValueError(f"Не совпала контрольная сумма: {package['name']}")
         updates.put(('status', 'Устанавливаем модели…'))
         if package['name'].endswith('.zip'):
             base = target / ('_internal' if package['task'] == 'nvidia' else 'data')
@@ -192,6 +248,7 @@ def install_downloads(target, output, tasks, cancelled, updates):
             destination.parent.mkdir(parents=True, exist_ok=True)
             source.replace(destination)
         source.unlink(missing_ok=True)
+    marker.unlink(missing_ok=True)
     if output.resolve() == (target / '.model-downloads').resolve():
         shutil.rmtree(output, ignore_errors=True)
 
@@ -201,6 +258,22 @@ def main():
         from huggingface_hub import hf_hub_download
         hf_hub_download(repo_id=sys.argv[2], filename=sys.argv[3], revision=sys.argv[4], local_dir=sys.argv[5])
         return 0
+    from single_instance import SingleInstance
+    guard = SingleInstance(r'Local\LiveTranslate.ModelsDownload.1')
+    if not guard.is_primary:
+        guard.close()
+        return 1
+    try:
+        return run_setup()
+    finally:
+        guard.close()
+
+
+def run_setup():
+    try:
+        diagnostics.configure()
+    except OSError:
+        pass
     parser = argparse.ArgumentParser()
     parser.add_argument('--target', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -221,6 +294,14 @@ def main():
         try:
             prepare(args.target, args.output, tasks, cancelled, updates)
             if args.install: install_downloads(args.target, args.output, tasks, cancelled, updates)
+            warnings = []
+            while not updates.empty():
+                kind, value = updates.get()
+                if kind == 'warning': warnings.append(value)
+            if warnings:
+                warning_file = args.target / 'data' / 'install-warnings.log'
+                warning_file.parent.mkdir(parents=True, exist_ok=True)
+                warning_file.write_text('\n'.join(warnings), encoding='utf-8')
             return 0
         except Exception as exc:
             args.output.mkdir(parents=True, exist_ok=True)
@@ -265,6 +346,7 @@ def main():
             elif kind == 'bytes':
                 state['bytes'] += value
                 detail.set(f"Скачано: {state['bytes'] / (1024 * 1024):.0f} МБ")
+            elif kind == 'warning': messagebox.showwarning('Загрузка компонентов', value, parent=root)
             else: messagebox.showerror('Загрузка компонентов', value, parent=root)
         if cancelled.is_set():
             status.set('Отменяем загрузку…')

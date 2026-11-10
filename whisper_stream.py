@@ -5,6 +5,7 @@ import re
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,8 @@ from faster_whisper import WhisperModel
 from faster_whisper.vad import get_speech_timestamps, get_vad_model
 from vosk import KaldiRecognizer
 from gpu_detection import nvidia_memory, supports_turbo
+from partial_translation import PartialTranslator
+import diagnostics
 
 
 RATE = 16000
@@ -31,6 +34,17 @@ SENTENCE_BOUNDARY = re.compile(r'(?<=[.!?…])\s+(?=[A-ZА-ЯЁ«"])')
 _DLL_DIRECTORIES = []
 
 
+class UnrecognizedAudioError(RuntimeError):
+    """Keep the undecoded audio in memory for optional user-directed recovery."""
+    def __init__(self, pcm):
+        super().__init__('Не удалось распознать длительный фрагмент речи. Его можно сохранить вручную.')
+        self.pcm = pcm
+
+
+class StuckRecognizerError(RuntimeError):
+    pass
+
+
 def normalize_terms(text):
     text = re.sub(r"(?i)(\b(?:доступ|подключени\w*)\s+по\s+)(?:ссс|сс|cc|ccc)(?!\w)", r"\1SSH", text)
     for pattern, canonical in TERM_PATTERNS:
@@ -43,24 +57,24 @@ def remove_phantom_outro(text):
     return PHANTOM_OUTRO.sub('', SUBTITLE_CREDIT.sub('', text)).strip()
 
 
-def merge_uncertain_turns(groups):
-    """Keep brief uncertain words with adjacent speech without inventing a speaker."""
-    result = [(label, list(parts)) for label, parts in groups]
-    i = 0
-    while i < len(result):
-        label, parts = result[i]
-        if label == 'Голос не определён' and len(''.join(parts).split()) <= 2 and len(result) > 1:
-            if i > 0 and i + 1 < len(result) and result[i-1][0] == result[i+1][0]:
-                result[i-1:i+2] = [('Голос не определён', result[i-1][1] + parts + result[i+1][1])]
-                continue
-            if i > 0:
-                result[i-1:i+1] = [('Голос не определён', result[i-1][1] + parts)]
-                continue
-            result[:2] = [('Голос не определён', parts + result[1][1])]
-            i = 1
-            continue
-        i += 1
-    return result
+def remove_preview_overlap(words, synthetic):
+    """Discard only a tail prefix already committed without audio timestamps."""
+    count = 0
+    while count < min(len(words), len(synthetic)) and StableWords.key(words[count].word.strip()) == StableWords.key(synthetic[count].strip()):
+        count += 1
+    return words[count:]
+
+
+def remove_tail_boundary_overlap(previous, tail):
+    """Drop matching words re-decoded at the cut, keeping later repetitions."""
+    if not previous or not tail or tail[0].start > 0.25:
+        return tail
+    old = [StableWords.key(word.word) for word in previous]
+    new = [StableWords.key(word.word) for word in tail]
+    for count in range(min(len(old), len(new)), 0, -1):
+        if old[-count:] == new[:count] and all(new[:count]):
+            return tail[count:]
+    return tail
 
 
 def load_whisper(folder, turbo_folder=None):
@@ -102,23 +116,52 @@ def reliable(segment):
             and segment.compression_ratio <= 2.4 and not REPEATED_NUMBER.search(segment.text))
 
 
+def amplify_quiet_audio(samples):
+    """Limited gain for an explicitly selected quiet-voice profile."""
+    rms = float(np.sqrt(np.mean(np.square(samples), dtype=np.float64))) if samples.size else 0.0
+    if rms < 0.0003:
+        return samples
+    return np.clip(samples * max(1.0, min(6.0, 0.035 / rms)), -1.0, 1.0).astype(np.float32)
+
+
 class SpeechGate:
     """Keep Silero's recurrent state private to each audio device."""
-    def __init__(self):
+    def __init__(self, quiet_mode=False):
         self.session = get_vad_model().session
+        self.quiet_mode = quiet_mode
         self.reset()
 
     def reset(self):
         self.h = np.zeros((1, 1, 128), np.float32)
         self.c = np.zeros_like(self.h)
         self.context = np.zeros(64, np.float32)
+        self.weak_h = np.zeros_like(self.h)
+        self.weak_c = np.zeros_like(self.c)
+        self.weak_context = np.zeros_like(self.context)
+        self.adaptive_detected = False
 
     def probability(self, frame):
         samples = np.frombuffer(frame, "<i2").astype(np.float32) / 32768
+        if self.quiet_mode:
+            samples = amplify_quiet_audio(samples)
         inputs = np.concatenate((self.context, samples))[None, :]
         self.context = samples[-64:]
         probability, self.h, self.c = self.session.run(None, {"input": inputs, "h": self.h, "c": self.c})
-        return float(probability.item()) if np.max(np.abs(samples)) > 0.0003 else 0.0
+        result = float(probability.item()) if np.max(np.abs(samples)) > 0.0003 else 0.0
+        rms = float(np.sqrt(np.mean(np.square(samples), dtype=np.float64)))
+        if not self.quiet_mode and .0003 <= rms < .006:
+            boosted = amplify_quiet_audio(samples)
+            candidate, self.weak_h, self.weak_c = self.session.run(
+                None, {'input': np.concatenate((self.weak_context, boosted))[None, :],
+                       'h': self.weak_h, 'c': self.weak_c})
+            self.weak_context = boosted[-64:]
+            weak_probability = float(candidate.item())
+            if weak_probability >= .82:
+                result = max(result, weak_probability)
+                self.adaptive_detected = True
+        else:
+            self.weak_h.fill(0); self.weak_c.fill(0); self.weak_context.fill(0)
+        return result
 
 
 class StableWords:
@@ -129,7 +172,7 @@ class StableWords:
 
     @staticmethod
     def key(word):
-        return word.strip('.,!?…:;"\'«»()').casefold()
+        return word.strip().strip('.,!?…:;"\'«»()').casefold()
 
     def update(self, text):
         words = [w.strip('.,!?…:;"\'«»()') for w in text.split()]
@@ -150,7 +193,7 @@ class StableWords:
 
 class WhisperStream:
     """Buffer speech until a pause; retain undecided words across long windows."""
-    def __init__(self, model, languages, speaker_model, speakers, line, partial, preview=None, diarizer=None, split_level=5):
+    def __init__(self, model, languages, speaker_model, speakers, line, partial, preview=None, diarizer=None, split_level=5, quiet_mode=False):
         self.model = model
         self.languages = languages
         self.speakers = speakers
@@ -164,7 +207,10 @@ class WhisperStream:
         self.speaker_decoder = None
         if speaker_model is not None and diarizer is None:
             self.speaker_decoder = KaldiRecognizer(languages["en"].speech, RATE, speaker_model)
-        self.gate = SpeechGate()
+        self.quiet_mode = quiet_mode
+        self.gate = SpeechGate(quiet_mode=quiet_mode)
+        self.vad_frames = self.vad_below = 0
+        self.vad_peak = 0.0
         self.pending = bytearray()
         self.lead = deque(maxlen=9)
         self.frames = bytearray()
@@ -172,15 +218,21 @@ class WhisperStream:
         self.previous_text = ""
         self.previous_language = self.previous_speaker = None
         self.unfinished = ""
+        self.pending_preview_overlap = []
         self.last_voice = self.clock = 0
+        self.next_window_bytes = 24 * RATE * 2
         self.preview = preview
         self.preview_lock = threading.Lock()
         self.preview_generation = 0
         self.stable_words = StableWords()
         self.stable_language = None
+        self.last_preview_text = None
         self.preview_at = 0
         self.preview_queue = queue.Queue(maxsize=1)
         self.preview_thread = None
+        self.closed = False
+        self.close_ok = True
+        self.partial_translator = PartialTranslator(languages, preview) if preview is not None else None
         if preview is not None:
             self.preview_thread = threading.Thread(target=self.run_preview, daemon=True)
             self.preview_thread.start()
@@ -193,6 +245,8 @@ class WhisperStream:
             generation, pcm, prefix = item
             try:
                 audio = np.frombuffer(pcm, "<i2").astype(np.float32) / 32768
+                if self.quiet_mode or self.gate.adaptive_detected:
+                    audio = amplify_quiet_audio(audio)
                 segments, info = self.model.transcribe(audio, language=None, beam_size=1, temperature=0,
                                                        condition_on_previous_text=False)
                 text = " ".join(s.text.strip() for s in segments if reliable(s)).strip()
@@ -206,11 +260,18 @@ class WhisperStream:
                         if self.stable_language is not None and info.language != self.stable_language:
                             continue
                         stable = self.stable_words.update(text)
-                        display = (prefix + ' ' + stable).strip()
-                        if display:
+                        visible = stable.split()
+                        overlap = self.pending_preview_overlap
+                        matched = 0
+                        while matched < min(len(visible), len(overlap)) and StableWords.key(visible[matched]) == StableWords.key(overlap[matched]):
+                            matched += 1
+                        display = (prefix + ' ' + ' '.join(visible[matched:])).strip()
+                        if display and display != self.last_preview_text:
                             if stable and self.stable_language is None:
                                 self.stable_language = info.language
+                            self.last_preview_text = display
                             self.preview((display, '', (self.stable_language or info.language).upper()))
+                            self.partial_translator.submit(display, self.stable_language or info.language)
             except Exception:
                 # A preview is optional; the final recognition still reports its own errors.
                 continue
@@ -233,16 +294,22 @@ class WhisperStream:
     def clear_preview(self, hide=True):
         if self.preview is not None:
             with self.preview_lock:
+                if self.partial_translator is not None:
+                    self.partial_translator.reset()
                 committed = list(self.stable_words.committed)
                 self.preview_generation += 1
                 self.stable_words = StableWords()
                 self.stable_language = None
+                self.last_preview_text = None
                 if hide:
                     self.preview(None)
                 return committed
         return []
 
     def close(self):
+        if self.closed:
+            return self.close_ok
+        self.closed = True
         if self.preview_thread is not None:
             self.clear_preview()
             try:
@@ -250,18 +317,35 @@ class WhisperStream:
             except queue.Empty:
                 pass
             self.preview_queue.put(None)
-            self.preview_thread.join()
+            self.preview_thread.join(timeout=2)
+        translation_closed = True
+        if self.partial_translator is not None:
+            translation_closed = self.partial_translator.close()
+        self.close_ok = (self.preview_thread is None or not self.preview_thread.is_alive()) and translation_closed
+        return self.close_ok
 
     def accept(self, pcm):
         self.pending.extend(pcm)
+        # Silero often assigns whispers a much lower probability than voiced
+        # speech. Keep the normal profile strict; only the explicit quiet
+        # profile uses the sensitive thresholds.
+        onset_threshold = 0.08 if self.quiet_mode else 0.62
+        continuation_threshold = 0.05 if self.quiet_mode else 0.38
         while len(self.pending) >= FRAME * 2:
             frame = bytes(self.pending[:FRAME * 2])
             del self.pending[:FRAME * 2]
             self.clock += FRAME
             probability = self.gate.probability(frame)
+            self.vad_frames += 1
+            self.vad_peak = max(self.vad_peak, probability)
+            self.vad_below += int(probability < onset_threshold)
+            if self.vad_frames >= 313:  # Approximately ten seconds, not every 32 ms.
+                diagnostics.record_vad_summary(self.vad_frames, self.vad_peak, self.vad_below)
+                self.vad_frames = self.vad_below = 0
+                self.vad_peak = 0.0
             if not self.frames:
                 self.lead.append(frame)
-                self.onset = self.onset + 1 if probability >= 0.62 else 0
+                self.onset = self.onset + 1 if probability >= onset_threshold else 0
                 if self.onset < 3:
                     continue
                 self.frames.extend(b"".join(self.lead))
@@ -270,11 +354,11 @@ class WhisperStream:
                 self.onset = 0
             else:
                 self.frames.extend(frame)
-                self.voiced += int(probability >= 0.62)
-            self.quiet = 0 if probability >= 0.38 else self.quiet + 1
+                self.voiced += int(probability >= onset_threshold)
+            self.quiet = 0 if probability >= continuation_threshold else self.quiet + 1
             if self.quiet >= self.quiet_frames:
                 self.finish(final=True)
-            elif len(self.frames) >= 24 * RATE * 2:
+            elif len(self.frames) >= self.next_window_bytes:
                 self.finish(final=False)
             else:
                 self.queue_preview()
@@ -288,9 +372,15 @@ class WhisperStream:
         # Argos models translate a sentence at a time; a second sentence can be omitted
         # if it is appended to a long first sentence in the same translation request.
         for sentence in SENTENCE_BOUNDARY.split(normalize_terms(text)):
-            translated = (translation.translate(sentence) if translation else
-                          "Немецкий перевод не установлен. Запустите установщик снова и выберите немецкий язык."
-                          if language == "de" else "Перевод для этого языка не установлен.")
+            try:
+                started = time.monotonic()
+                translated = (translation.translate(sentence) if translation else
+                              "Немецкий перевод не установлен. Запустите установщик снова и выберите немецкий язык."
+                              if language == "de" else "Перевод для этого языка не установлен.")
+                diagnostics.record_timing('final_translation', time.monotonic() - started)
+            except Exception as exc:
+                diagnostics.log_error('translate', type(exc), exc.__traceback__)
+                translated = 'Не удалось перевести фразу. Исходный текст сохранён.'
             self.line(sentence, translated, speaker, direction)
 
     def finish(self, final):
@@ -305,6 +395,16 @@ class WhisperStream:
                 self.clear_preview()
             return
         samples = np.frombuffer(pcm, "<i2").astype(np.float32) / 32768
+        quiet_final = final and self.quiet_mode
+        if quiet_final:
+            # Whispered previews are especially unstable; don't force
+            # their unsupported words into the independently decoded result.
+            committed = []
+        adaptive_detected = self.gate.adaptive_detected
+        if final:
+            self.gate.adaptive_detected = False
+        if self.quiet_mode or adaptive_detected:
+            samples = amplify_quiet_audio(samples)
         language, confidence, _ = self.model.detect_language(audio=samples)
         fresh = self.clock - len(samples) - self.last_voice < 15 * RATE
         who = None
@@ -317,15 +417,24 @@ class WhisperStream:
         identified = self.speaker_decoder is None or (who is not None and who != "Голос не определён")
         same_turn = self.diarizer is None and fresh and identified and language == self.previous_language and who == self.previous_speaker
         words = []
-        if confidence >= (0.42 if language in self.languages else 0.75):
+        if confidence >= (0.42 if language in self.languages or language == 'de' else 0.75):
             segments, _ = self.model.transcribe(
                 np.pad(samples, (0, 12800)) if final else samples,
                 language=language, beam_size=3, temperature=0, word_timestamps=True,
-                condition_on_previous_text=True, initial_prompt=self.previous_text if same_turn else None,
+                condition_on_previous_text=True, initial_prompt=self.previous_text if same_turn and not quiet_final else None,
                 repetition_penalty=1.08, no_repeat_ngram_size=5)
             for seg in segments:
                 if reliable(seg):
                     words.extend(seg.words or [])
+        if self.pending_preview_overlap and words:
+            retained = remove_preview_overlap(words, self.pending_preview_overlap)
+            matched = len(words) - len(retained)
+            words = retained
+            if matched and [StableWords.key(x) for x in committed[:matched]] == [StableWords.key(x) for x in self.pending_preview_overlap[:matched]]:
+                committed = committed[matched:]
+            self.pending_preview_overlap = []
+        real_word_count = len(words)
+        synthetic = committed[len(words):]
         # Preserve words already shown; subsequent decoding may revise them.
         for i, shown in enumerate(committed):
             if i >= len(words):
@@ -337,29 +446,44 @@ class WhisperStream:
         if not final:
             # Prefer punctuation away from the uncertain right edge. Otherwise keep the
             # unfinished sentence as text and re-decode its audio tail with the next window.
-            stable = [i for i, w in enumerate(words) if 1 <= w.end <= 21]
+            stable = [i for i, w in enumerate(words[:real_word_count]) if 1 <= w.end <= 21]
             ends = [i for i in stable if END_OF_SENTENCE.search(words[i].word.strip())]
             cut = ends[-1] if ends else (stable[-1] if stable else None)
-            boundary = words[cut].end if cut is not None else 18.0
+            if cut is None:
+                if self.preview is not None:
+                    with self.preview_lock:
+                        self.stable_words.committed = committed
+                if len(self.frames) >= 30 * RATE * 2:
+                    raise UnrecognizedAudioError(bytes(self.frames) + bytes(self.pending))
+                self.next_window_bytes = len(self.frames) + 2 * RATE * 2
+                return
+            boundary = words[cut].end
             if cut is not None and cut + 1 < len(words):
                 boundary = (boundary + max(boundary, words[cut + 1].start)) / 2
             del self.frames[:int(min(boundary, 22) * RATE) * 2]
-            words = words[:cut + 1] if cut is not None else []
+            if synthetic and cut == real_word_count - 1:
+                words = words[:cut + 1] + words[real_word_count:]
+                self.pending_preview_overlap = list(synthetic)
+            else:
+                words = words[:cut + 1]
+        self.next_window_bytes = 24 * RATE * 2
         self.voiced = 0 if final else min(6, len(self.frames) // (FRAME * 2))
+        # A whispered utterance can leave residual breath in the tail.
+        # Re-decoding it as an independent clip often hallucinates extra words.
+        skip_quiet_tail = self.quiet_mode
         if self.diarizer is not None and words:
-            if final:
+            if final and not skip_quiet_tail:
                 tail_start = round(words[-1].end * RATE)
                 tail = samples[tail_start:]
                 if len(tail) >= RATE * 0.6 and get_speech_timestamps(tail, threshold=0.6, min_speech_duration_ms=160):
                     rest, _ = self.model.transcribe(np.pad(tail, (0, 12800)), language=language, beam_size=3,
                                                     temperature=0, word_timestamps=True,
                                                     condition_on_previous_text=False, no_repeat_ngram_size=5)
-                    for seg in rest:
-                        if reliable(seg):
-                            for word in seg.words or []:
-                                if word.start < len(tail) / RATE:
-                                    words.append(SimpleNamespace(word=word.word, start=word.start + tail_start / RATE,
-                                                                 end=word.end + tail_start / RATE))
+                    tail_words = [word for seg in rest if reliable(seg) for word in (seg.words or [])
+                                  if word.start < len(tail) / RATE]
+                    for word in remove_tail_boundary_overlap(words, remove_preview_overlap(tail_words, synthetic)):
+                        words.append(SimpleNamespace(word=word.word, start=word.start + tail_start / RATE,
+                                                     end=word.end + tail_start / RATE))
             turns = self.diarizer.turns(samples)
             groups = []
             for word in words:
@@ -379,7 +503,7 @@ class WhisperStream:
                     groups.append((label, []))
                 groups[-1][1].append(word.word)
             self.flush_text()
-            for label, parts in merge_uncertain_turns(groups):
+            for label, parts in groups:
                 text = ''.join(parts).strip()
                 if text:
                     self.publish(text, language, label)
@@ -390,7 +514,7 @@ class WhisperStream:
             self.clear_preview()
             return
         text = "".join(w.word for w in words).strip()
-        if final and words:
+        if final and words and not skip_quiet_tail:
             # Whisper can emit an end token before the last spoken words of a clip.
             tail = samples[round(words[-1].end * RATE):]
             if len(tail) >= RATE * 0.6 and get_speech_timestamps(tail, threshold=0.6, min_speech_duration_ms=160):
@@ -398,8 +522,10 @@ class WhisperStream:
                                                 temperature=0, word_timestamps=True, condition_on_previous_text=False,
                                                 no_repeat_ngram_size=5)
                 # Padding helps Whisper decode the end, but is not actual speech.
-                suffix = "".join(word.word for seg in rest if reliable(seg)
-                                 for word in (seg.words or []) if word.start < len(tail) / RATE).strip()
+                tail_words = [word for seg in rest if reliable(seg) for word in (seg.words or [])
+                              if word.start < len(tail) / RATE]
+                tail_words = remove_tail_boundary_overlap(words, remove_preview_overlap(tail_words, synthetic))
+                suffix = "".join(word.word for word in tail_words).strip()
                 text = (text + " " + suffix).strip()
         text = remove_phantom_outro(text)
         if not text:

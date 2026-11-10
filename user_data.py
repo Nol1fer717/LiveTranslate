@@ -41,7 +41,38 @@ def legacy_directory():
     return Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'LiveTranslate'
 
 
-def migrate_user_data():
+def copy_recording(item, old_recordings, dest):
+    target = dest / 'Recordings' / item.relative_to(old_recordings)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        with item.open('rb') as source:
+            source_hash = hashlib.file_digest(source, 'sha256').hexdigest()
+        with target.open('rb') as existing:
+            if hashlib.file_digest(existing, 'sha256').hexdigest() == source_hash:
+                return
+        target = target.with_name(f'{target.stem}.legacy-{source_hash}{target.suffix}')
+        if target.exists():
+            with target.open('rb') as existing:
+                if hashlib.file_digest(existing, 'sha256').hexdigest() == source_hash:
+                    return
+            raise FileExistsError(f'Не удалось сохранить копию записи: {target}')
+    temporary = None
+    try:
+        with item.open('rb') as source, tempfile.NamedTemporaryFile(dir=target.parent, prefix='.migration-', delete=False) as output:
+            temporary = Path(output.name)
+            shutil.copyfileobj(source, output)
+        if os.name == 'nt':
+            os.rename(temporary, target)
+        else:
+            os.link(temporary, target)
+    except FileExistsError:
+        pass
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def migrate_user_data(failures=None):
     dest = data_directory()
     old = legacy_directory()
     dest.mkdir(parents=True, exist_ok=True)
@@ -51,9 +82,8 @@ def migrate_user_data():
     source_db, target_db = old / 'library.sqlite3', dest / 'library.sqlite3'
     if source_db.is_file() and not target_db.exists():
         # SQLite backup includes committed WAL data and never overwrites an existing library.
-        temp = dest / 'library.migrating.sqlite3'
-        if temp.exists():
-            raise FileExistsError(f'Обнаружена незавершённая копия базы: {temp}')
+        with tempfile.NamedTemporaryFile(dir=dest, prefix='library.migrating-', suffix='.sqlite3', delete=False) as temporary:
+            temp = Path(temporary.name)
         try:
             with closing(sqlite3.connect(f'{source_db.as_uri()}?mode=ro', uri=True)) as source:
                 with closing(sqlite3.connect(temp)) as target:
@@ -63,6 +93,7 @@ def migrate_user_data():
                 os.rename(temp, target_db)
             else:
                 os.link(temp, target_db)
+            (dest / '.migration-library-complete').touch(exist_ok=True)
         finally:
             temp.unlink(missing_ok=True)
     old_recordings = old / 'Recordings'
@@ -70,34 +101,12 @@ def migrate_user_data():
         for item in old_recordings.rglob('*'):
             if not item.is_file():
                 continue
-            target = dest / 'Recordings' / item.relative_to(old_recordings)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                with item.open('rb') as source:
-                    source_hash = hashlib.file_digest(source, 'sha256').hexdigest()
-                with target.open('rb') as existing:
-                    if hashlib.file_digest(existing, 'sha256').hexdigest() == source_hash:
-                        continue
-                target = target.with_name(f'{target.stem}.legacy-{source_hash}{target.suffix}')
-                if target.exists():
-                    with target.open('rb') as existing:
-                        if hashlib.file_digest(existing, 'sha256').hexdigest() == source_hash:
-                            continue
-                    raise FileExistsError(f'Не удалось сохранить копию записи: {target}')
-            temporary = None
             try:
-                with item.open('rb') as source, tempfile.NamedTemporaryFile(dir=target.parent, prefix='.migration-', delete=False) as output:
-                    temporary = Path(output.name)
-                    shutil.copyfileobj(source, output)
-                if os.name == 'nt':
-                    os.rename(temporary, target)
-                else:
-                    os.link(temporary, target)
-            except FileExistsError:
-                pass
-            finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
-    if source_db.exists() or old_recordings.is_dir():
+                copy_recording(item, old_recordings, dest)
+            except OSError:
+                if failures is None:
+                    raise
+                failures.append(item)
+    if (source_db.exists() or old_recordings.is_dir()) and not failures:
         marker.touch(exist_ok=True)
     return dest

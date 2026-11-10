@@ -41,3 +41,19 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.store.notes('all', 'Сначала новые'), [])
 
 if __name__ == '__main__': unittest.main()
+def test_unicode_folder_names_are_case_insensitive_and_sorted(tmp_path):
+    import sqlite3
+    import pytest
+    from storage import Storage
+    store = Storage(tmp_path / 'library.sqlite3')
+    try:
+        work = store.add_folder('Работа')
+        other = store.add_folder('Архив')
+        with pytest.raises(sqlite3.IntegrityError):
+            store.add_folder('работа')
+        with pytest.raises(sqlite3.IntegrityError):
+            store.rename_folder(other, 'РАБОТА')
+        assert [row[1] for row in store.folders()] == ['Архив', 'Работа']
+        store.rename_folder(work, 'РАБОТА')
+    finally:
+        store.close()

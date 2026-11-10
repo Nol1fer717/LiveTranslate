@@ -18,15 +18,70 @@ def package(name, data, task=None):
             'files':[{'path':'models/'+name, 'sha256':digest}]}
 
 class DownloaderTests(unittest.TestCase):
+    def test_partial_download_resumes_or_restarts_safely(self):
+        class Response(io.BytesIO):
+            def __init__(self, data, status, headers):
+                super().__init__(data); self.status=status; self.headers=headers
+        item=package('model.bin', b'hello')
+        for status, body, headers in [(206, b'lo', {'Content-Range':'bytes 3-4/5'}), (200, b'hello', {})]:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                output=Path(tmp); (output/'model.bin.part').write_bytes(b'hel'); seen=[]
+                def open_response(request, timeout):
+                    seen.append(request.get_header('Range'))
+                    return Response(body, status, headers)
+                with patch.object(downloader, 'urlopen', side_effect=open_response):
+                    downloader.download(item, output, threading.Event(), lambda _: None)
+                self.assertEqual(seen, ['bytes=3-']); self.assertEqual((output/'model.bin').read_bytes(), b'hello')
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp); (output/'model.bin.part').write_bytes(b'hello')
+            with patch.object(downloader, 'urlopen', side_effect=AssertionError('network not needed')):
+                downloader.download(item, output, threading.Event(), lambda _: None)
+            self.assertEqual((output/'model.bin').read_bytes(), b'hello')
+    def test_downloader_owns_install_mutex_for_full_setup(self):
+        from types import SimpleNamespace
+        guard = unittest.mock.Mock(is_primary=True)
+        with patch.dict('sys.modules', {'single_instance': SimpleNamespace(SingleInstance=lambda name: guard)}), patch.object(downloader.sys, 'argv', ['model_downloader']), patch.object(downloader, 'run_setup', return_value=0):
+            self.assertEqual(downloader.main(), 0)
+        guard.close.assert_called_once()
+    def test_download_timeout_tracks_idle_time_not_total_duration(self):
+        timer = downloader.ProgressTimeout(0, timeout=10)
+        self.assertFalse(timer.stalled(9, 100))
+        self.assertFalse(timer.stalled(18, 200))
+        self.assertFalse(timer.stalled(27, 300))
+        self.assertTrue(timer.stalled(38, 300))
+    def test_install_rejects_changed_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); output=root/'downloads'; output.mkdir(); target=root/'app'
+            item=package('model.bin',b'correct'); config=root/'packages.json'
+            config.write_text(json.dumps([item]),encoding='utf-8')
+            (output/'model.bin').write_bytes(b'corrupted')
+            with patch.object(downloader,'CONFIG',config), self.assertRaises(ValueError):
+                downloader.install_downloads(target,output,set(),threading.Event(),queue.SimpleQueue())
+            self.assertFalse((target/'models'/'model.bin').exists())
+
+    def test_optional_language_failure_still_installs_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); config = root / 'packages.json'
+            config.write_text(json.dumps([package('base', b'base'), package('german', b'german', 'german')]), encoding='utf-8')
+            def fake_download(item, output, cancelled, notify):
+                if item['task'] == 'german': raise RuntimeError('offline')
+                (output / item['name']).write_bytes(b'base')
+            with patch.object(downloader, 'CONFIG', config), patch.object(downloader, 'download', side_effect=fake_download):
+                downloader.prepare(root / 'app', root / 'out', {'german'}, threading.Event(), queue.SimpleQueue())
+                downloader.install_downloads(root / 'app', root / 'out', {'german'}, threading.Event(), queue.SimpleQueue())
+            self.assertEqual((root / 'app' / 'models' / 'base').read_bytes(), b'base')
+
     def test_background_install_extracts_verified_archive_and_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); output=root/'downloads'; output.mkdir(); target=root/'app'
-            item=package('model.zip',b'x'); config=root/'packages.json'; config.write_text(json.dumps([item]),encoding='utf-8')
+            config=root/'packages.json'
             with zipfile.ZipFile(output/'model.zip','w') as archive: archive.writestr('model/weights.bin',b'weights')
+            item=package('model.zip',(output/'model.zip').read_bytes()); config.write_text(json.dumps([item]),encoding='utf-8')
             with patch.object(downloader,'CONFIG',config):
                 downloader.install_downloads(target,output,set(),threading.Event(),queue.SimpleQueue())
             self.assertEqual((target/'data/model/weights.bin').read_bytes(),b'weights')
             with zipfile.ZipFile(output/'model.zip','w') as archive: archive.writestr('../escape',b'bad')
+            item=package('model.zip',(output/'model.zip').read_bytes()); config.write_text(json.dumps([item]),encoding='utf-8')
             with patch.object(downloader,'CONFIG',config), self.assertRaises(ValueError):
                 downloader.install_downloads(target,output,set(),threading.Event(),queue.SimpleQueue())
             self.assertFalse((target/'escape').exists())

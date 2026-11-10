@@ -19,7 +19,9 @@ import sentencepiece
 from sacremoses import MosesDetokenizer, MosesPunctNormalizer, MosesTokenizer
 from subword_nmt.apply_bpe import BPE
 from vosk import KaldiRecognizer, Model, SetLogLevel
-from whisper_stream import StableWords, WhisperStream, remove_phantom_outro
+from whisper_stream import StableWords, WhisperStream, UnrecognizedAudioError, StuckRecognizerError, remove_phantom_outro
+from partial_translation import PartialTranslator
+import diagnostics
 
 ROOT = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 DATA = ROOT / "data"
@@ -27,6 +29,20 @@ SPEAKER_PATH = DATA / "vosk-model-spk-0.4"
 MODELS = {"ru": "vosk-model-small-ru-0.22", "en": "vosk-model-small-en-us-0.15"}
 SetLogLevel(-1)
 DEVICE_LOCK = threading.Lock()
+STOP_WAIT_SECONDS = 10.0
+
+
+class SourceStop:
+    """Per-source cancellation that also observes the session stop event."""
+    def __init__(self, session_stop):
+        self.session_stop = session_stop
+        self.local_stop = threading.Event()
+
+    def is_set(self):
+        return self.session_stop.is_set() or self.local_stop.is_set()
+
+    def set(self):
+        self.local_stop.set()
 
 
 def prepare_spoken_russian(text):
@@ -110,7 +126,7 @@ def mono16(data, channels, loopback=False):
     if channels == 1:
         return data
     frames = np.frombuffer(data, dtype="<i2").reshape(-1, channels)
-    if loopback and channels > 2:
+    if channels > 2:
         levels = np.sqrt(np.mean(frames.astype(np.float32) ** 2, axis=0))
         active = levels > max(1.0, float(levels.max()) * 0.01)
         if active.any():
@@ -152,26 +168,34 @@ class SessionSpeakers:
         return f"Голос {len(self.centres)}"
 
 
-def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None, diarizer=None, split_level=5):
+def capture(audio, device, language, target, stop, emit, record_path, speaker_model=None, whisper=None, diarizer=None, split_level=5, quiet_mode=False):
     """Capture continuously while speech recognition and translation consume queued blocks."""
+    original_emit = emit
+    emissions_closed = threading.Event()
+    def emit(*args):
+        if not emissions_closed.is_set():
+            original_emit(*args)
     chunks = queue.Queue(maxsize=200)
     analysis = queue.Queue(maxsize=6000)  # Up to ten minutes of compact mono PCM if inference falls behind.
     errors = []
+    late_pcm = []
     gap = object()
     end = object()
     rate = int(device["defaultSampleRate"])
     channels = int(device["maxInputChannels"])
     speakers = SessionSpeakers() if speaker_model is not None else None
     automatic = None
+    partial_translator = None
     if whisper is None:
         decoder = KaldiRecognizer(language.speech, 16000)
         if speakers is not None:
             decoder.SetSpkModel(speaker_model)
+        partial_translator = PartialTranslator({language.source: language}, lambda value: emit('preview', target, value))
     else:
         automatic = WhisperStream(whisper, language, speaker_model, speakers,
                                   lambda *line: emit("line", target, line),
                                   lambda text: emit("partial", target, text),
-                                  lambda result: emit("preview", target, result), diarizer=diarizer, split_level=split_level)
+                                  lambda result: emit("preview", target, result), diarizer=diarizer, split_level=split_level, quiet_mode=quiet_mode)
     resampler = None
     partial = ""
     stable_partial = StableWords()
@@ -186,6 +210,8 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
 
     def publish(result):
         nonlocal partial, stable_partial
+        if partial_translator is not None:
+            partial_translator.reset()
         phrase = json.loads(result)
         text = phrase.get("text", "").strip()
         if stable_partial.committed:
@@ -194,7 +220,12 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         text = remove_phantom_outro(text)
         if text:
             who = speakers.label(phrase) if speakers is not None else None
-            emit("line", target, (text, language.translate(text), who))
+            try:
+                translated = language.translate(text)
+            except Exception as exc:
+                diagnostics.log_error('translate', type(exc), exc.__traceback__)
+                translated = 'Не удалось перевести фразу. Исходный текст сохранён.'
+            emit("line", target, (text, translated, who))
         emit("preview", target, None)
         partial = ""
         stable_partial = StableWords()
@@ -223,13 +254,21 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                     if stable and stable != partial:
                         partial = stable
                         emit("partial", target, stable)
+                        emit('preview', target, (stable, '', language.source.upper()))
+                        partial_translator.submit(stable, language.source)
             flush()
         except Exception as exc:
             errors.append(exc)
             stop.set()
         finally:
             if automatic is not None:
-                automatic.close()
+                if automatic.close() is False:
+                    errors.append(StuckRecognizerError('Распознавание не завершилось. Перезапустите приложение.'))
+                    stop.set()
+            if partial_translator is not None:
+                if partial_translator.close() is False:
+                    errors.append(StuckRecognizerError('Перевод не завершился. Перезапустите приложение.'))
+                    stop.set()
 
     def submit(item):
         try:
@@ -237,7 +276,16 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         except queue.Full:
             raise RuntimeError("Распознавание отстало более чем на десять минут.")
 
+    worker = None
+    def close_if_safe(resource):
+        if worker is None or not worker.is_alive():
+            resource.close()
+
     with ExitStack() as stack:
+        if automatic is not None:
+            stack.callback(close_if_safe, automatic)
+        if partial_translator is not None:
+            stack.callback(close_if_safe, partial_translator)
         # PortAudio initializes COM on its owner thread. Each WASAPI worker also needs it.
         result = ctypes.windll.ole32.CoInitializeEx(None, 0)
         if result < 0:
@@ -261,7 +309,7 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
         with DEVICE_LOCK:
             started = time.monotonic()
             stream.start_stream()
-        worker = threading.Thread(target=recognize)
+        worker = threading.Thread(target=recognize, daemon=True)
         worker.start()
         emit("ready", target, None)
         last_packet = started
@@ -310,6 +358,8 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                 in_gap = False
                 if not errors:
                     submit(pcm)
+                elif isinstance(errors[0], UnrecognizedAudioError):
+                    late_pcm.append(pcm)
         finally:
             try:
                 if stream.is_active():
@@ -318,12 +368,25 @@ def capture(audio, device, language, target, stop, emit, record_path, speaker_mo
                 if writer:
                     writer.close()
             finally:
-                while worker.is_alive():
+                deadline = time.monotonic() + STOP_WAIT_SECONDS
+                while worker.is_alive() and time.monotonic() < deadline:
                     try:
                         analysis.put(end, timeout=0.1)
                         break
                     except queue.Full:
                         continue
-                worker.join()
+                worker.join(timeout=max(0, deadline - time.monotonic()))
+                if worker.is_alive():
+                    emissions_closed.set()
+                    errors.append(StuckRecognizerError('Распознавание не завершилось. Перезапустите приложение.'))
         if errors:
+            if any(isinstance(error, StuckRecognizerError) for error in errors):
+                errors[0].restart_required = True
+            if isinstance(errors[0], UnrecognizedAudioError):
+                queued = []
+                while not analysis.empty():
+                    item = analysis.get_nowait()
+                    if isinstance(item, bytes):
+                        queued.append(item)
+                errors[0].pcm += b''.join(queued + late_pcm)
             raise errors[0]

@@ -12,16 +12,19 @@ def timestamp():
 class Storage:
     def __init__(self, path=None):
         self.legacy_conflict = False
+        self.migration_warnings = []
         if path is None:
             destination = data_directory()
             self.legacy_conflict = ((destination / 'library.sqlite3').exists()
                                     and (legacy_directory() / 'library.sqlite3').exists()
+                                    and not (destination / '.migration-library-complete').exists()
                                     and not (destination / '.migration-from-appdata-complete').exists())
-            self.path = migrate_user_data() / 'library.sqlite3'
+            self.path = migrate_user_data(self.migration_warnings) / 'library.sqlite3'
         else:
             self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path)
+        self.db.create_collation('UNICODE_CASEFOLD', lambda a, b: (a.casefold() > b.casefold()) - (a.casefold() < b.casefold()))
         self.db.execute('PRAGMA foreign_keys = ON')
         self.db.executescript('''
         CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, started TEXT NOT NULL, ended TEXT, mode TEXT NOT NULL);
@@ -55,14 +58,18 @@ class Storage:
             self.db.execute('DELETE FROM sessions WHERE id=?', (session,))
 
     def folders(self):
-        return self.db.execute('SELECT id,name FROM folders ORDER BY name COLLATE NOCASE').fetchall()
+        return self.db.execute('SELECT id,name FROM folders ORDER BY name COLLATE UNICODE_CASEFOLD').fetchall()
 
     def add_folder(self, name):
         with self.db:
+            if self.db.execute('SELECT 1 FROM folders WHERE name = ? COLLATE UNICODE_CASEFOLD', (name,)).fetchone():
+                raise sqlite3.IntegrityError('Folder name already exists')
             return self.db.execute('INSERT INTO folders(name) VALUES (?)', (name,)).lastrowid
 
     def rename_folder(self, folder, name):
         with self.db:
+            if self.db.execute('SELECT 1 FROM folders WHERE id != ? AND name = ? COLLATE UNICODE_CASEFOLD', (folder, name)).fetchone():
+                raise sqlite3.IntegrityError('Folder name already exists')
             self.db.execute('UPDATE folders SET name=? WHERE id=?', (name, folder))
 
     def delete_folder(self, folder):
@@ -70,7 +77,7 @@ class Storage:
             self.db.execute('DELETE FROM folders WHERE id=?', (folder,))
 
     def notes(self, folder, sort):
-        order = 'title COLLATE NOCASE, id DESC' if sort == 'По названию' else 'updated DESC, id DESC'
+        order = 'title COLLATE UNICODE_CASEFOLD, id DESC' if sort == 'По названию' else 'updated DESC, id DESC'
         if folder == 'all':
             return self.db.execute(f'SELECT id,title,updated,folder_id FROM notes ORDER BY {order}').fetchall()
         if folder is None:

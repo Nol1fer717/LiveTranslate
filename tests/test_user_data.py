@@ -8,6 +8,37 @@ from storage import Storage
 from user_data import migrate_user_data
 
 class MigrationTests(unittest.TestCase):
+    def test_recording_failure_after_database_copy_does_not_report_database_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'LOCALAPPDATA': tmp, 'LIVETRANSLATE_DOCUMENTS': str(Path(tmp) / 'Documents')}):
+            old=Path(tmp)/'LiveTranslate'; old.mkdir()
+            legacy=Storage(old/'library.sqlite3'); legacy.add_folder('Original'); legacy.close()
+            wav=old/'Recordings'/'test.wav'; wav.parent.mkdir(); wav.write_bytes(b'recording')
+            with patch('user_data.shutil.copyfileobj', side_effect=OSError('locked')):
+                first=Storage(); self.assertTrue(first.migration_warnings); first.close()
+                second=Storage(); self.assertFalse(second.legacy_conflict); second.close()
+    def test_unreadable_recording_does_not_block_start_and_is_retried(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'LOCALAPPDATA': tmp, 'LIVETRANSLATE_DOCUMENTS': str(Path(tmp) / 'Documents')}):
+            source = Path(tmp) / 'LiveTranslate' / 'Recordings' / 'test.wav'
+            source.parent.mkdir(parents=True); source.write_bytes(b'recording')
+            target = Path(tmp) / 'Documents' / 'LiveTranslate' / 'Recordings' / 'test.wav'
+            marker = target.parent.parent / '.migration-from-appdata-complete'
+            with patch('user_data.shutil.copyfileobj', side_effect=OSError('unavailable')):
+                storage = Storage()
+                self.assertEqual(storage.migration_warnings, [source])
+                storage.close()
+            self.assertFalse(marker.exists()); self.assertTrue(source.exists())
+            storage = Storage(); self.assertFalse(storage.migration_warnings); storage.close()
+            self.assertEqual(target.read_bytes(), b'recording'); self.assertTrue(marker.exists())
+    def test_stale_migration_database_does_not_block_startup(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'LOCALAPPDATA': tmp, 'LIVETRANSLATE_DOCUMENTS': str(Path(tmp) / 'Documents')}):
+            old = Path(tmp) / 'LiveTranslate'; old.mkdir()
+            legacy = Storage(old / 'library.sqlite3'); legacy.add_folder('Original'); legacy.close()
+            dest = Path(tmp) / 'Documents' / 'LiveTranslate'; dest.mkdir(parents=True)
+            stale = dest / 'library.migrating.sqlite3'; stale.write_bytes(b'previous unfinished copy')
+            migrated = Storage()
+            self.assertEqual(migrated.folders()[0][1], 'Original'); migrated.close()
+            self.assertEqual(stale.read_bytes(), b'previous unfinished copy')
+
     def test_moves_database_and_wav_by_copy_without_removing_originals(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'LOCALAPPDATA': tmp, 'LIVETRANSLATE_DOCUMENTS': str(Path(tmp) / 'Documents')}):
             old = Path(tmp) / 'LiveTranslate'; old.mkdir()

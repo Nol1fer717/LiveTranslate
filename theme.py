@@ -10,3 +10,9 @@ ACCENT_SOFT = '#deeee7'
 BORDER = '#d9e4dd'
 HOVER = '#e7f0ea'
 SELECTION = '#c4e4d6'
+ON_ACCENT = '#ffffff'
+
+# Immutable baseline for palette construction, unaffected by runtime themes.
+LIGHT_PALETTE = {name: globals()[name] for name in (
+    'BG', 'CARD', 'FIELD', 'TEXT', 'MUTED', 'ACCENT', 'ACCENT_DARK',
+    'ACCENT_SOFT', 'BORDER', 'HOVER', 'SELECTION', 'ON_ACCENT')}

@@ -10,6 +10,7 @@ for package in ('cublas', 'cudnn', 'cuda_nvrtc'):
     folder = Path(sys.prefix) / 'Lib' / 'site-packages' / 'nvidia' / package / 'bin'
     binaries += [(str(path), f'nvidia/{package}/bin') for path in folder.glob('*.dll')]
 datas = collect_data_files('faster_whisper')
+datas += [('installer/packages.json', '.')]
 datas += collect_data_files('sacremoses')
 datas, binaries = collect_delvewheel_libs_directory('av', datas=datas, binaries=binaries)
 
@@ -35,6 +36,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='VoiceTranslator',
+    version='version_info.txt',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
